@@ -62,3 +62,13 @@ Técnicas soportadas: - memoria compartida, - semáforos, - colas de
 mensajes, - pipes, - locks y monitores, - variables de condición.
 
 Cada mecanismo afecta estados y sincronización interna.
+
+## 9. Cambios recientes en la implementación
+
+Se ha modularizado el código para mejorar la mantenibilidad y escalabilidad. Los cambios incluyen:
+
+- Refactorización del manejo de memoria en `manager.py` y `strategies.py`.
+- Separación de componentes de la interfaz gráfica en archivos individuales como `memory_bar.py` y `console.py`.
+- Simplificación del archivo principal `gui.py` para servir como punto de entrada.
+
+Estos cambios permiten una simulación más precisa y extensible de los procesos y su gestión.

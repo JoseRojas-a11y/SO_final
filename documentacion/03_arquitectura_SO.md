@@ -41,3 +41,13 @@ proceso, - operaciones: open, close, read, write.
 
 Cada dispositivo posee: - cola propia, - latencia, - interrupciones al
 completar operaciones.
+
+## 8. Cambios recientes en la implementación
+
+La arquitectura del simulador ha sido actualizada para incluir:
+
+- Un diseño modular que separa la lógica de memoria, planificación y simulación en archivos independientes.
+- Un motor de simulación (`engine.py`) que centraliza la ejecución y coordinación de los componentes.
+- Una interfaz gráfica mejorada y modularizada para visualizar el estado del sistema operativo.
+
+Estos cambios permiten una simulación más realista y una arquitectura más cercana a sistemas operativos reales.
