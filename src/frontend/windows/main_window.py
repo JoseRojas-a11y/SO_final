@@ -32,13 +32,6 @@ class MainWindow(QMainWindow):
         header_layout.addWidget(QLabel(f"<b>Planificador:</b> {engine.scheduling_alg_name}"))
         proc_layout.addLayout(header_layout)
 
-        # Controls
-        controls_layout = QHBoxLayout()
-        self.btn_create_process = QPushButton("Crear Proceso Manual")
-        self.btn_create_process.clicked.connect(self.create_manual_process)
-        controls_layout.addWidget(self.btn_create_process)
-        proc_layout.addLayout(controls_layout)
-
         # CPU Status Panel
         cpu_group = QGroupBox("Estado de CPUs (Multiprocesador)")
         cpu_layout = QHBoxLayout(cpu_group)
@@ -127,6 +120,7 @@ class MainWindow(QMainWindow):
         controls_layout = QGridLayout(controls_group)
         
         self.btn_pause_resume = QPushButton("Activar")
+        self.btn_pause_resume.setStyleSheet("background-color: #00AA00; color: white;")
         self.btn_pause_resume.clicked.connect(self.toggle_simulation)
         controls_layout.addWidget(self.btn_pause_resume, 0, 0)
         
