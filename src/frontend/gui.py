@@ -67,7 +67,8 @@ class MemoryBar(QWidget):
         # clear
         while self._layout.count():
             item = self._layout.takeAt(0)
-            w = item.widget()
+            if item:
+                w = item.widget() 
             if w:
                 w.deleteLater()
         for b in self.blocks:
