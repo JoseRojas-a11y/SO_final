@@ -1,0 +1,10 @@
+src\__pycache__\
+
+*.pyc
+.DS_Store
+.env
+
+.vscode\
+.idea\
+
+requirements.txt
