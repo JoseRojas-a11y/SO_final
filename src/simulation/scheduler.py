@@ -82,7 +82,6 @@ class RoundRobin(Scheduler):
     def __init__(self, quantum: int = 4):
         super().__init__()
         self.quantum = quantum
-        self.current_quantum = 0
         self.rr_queue: Deque[Process] = deque()
 
     def add_process(self, process: Process):
@@ -90,21 +89,7 @@ class RoundRobin(Scheduler):
         self.rr_queue.append(process)
 
     def next_process(self, current_tick: int) -> Optional[Process]:
-        # If current process is running
-        if self.current_process and self.current_process.state == "RUNNING":
-            self.current_quantum += 1
-            if self.current_quantum < self.quantum:
-                return self.current_process
-            else:
-                # Quantum expired
-                self.current_process.state = "READY"
-                self.rr_queue.append(self.current_process)
-                self.current_process = None
-                self.current_quantum = 0
-        
+        # Engine handles preemption. We just return next in queue.
         if self.rr_queue:
-            next_p = self.rr_queue.popleft()
-            self.current_quantum = 0
-            return next_p
-        
+            return self.rr_queue.popleft()
         return None

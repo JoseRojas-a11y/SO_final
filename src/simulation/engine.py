@@ -2,7 +2,7 @@ import random
 import time
 from typing import Dict, List, Optional
 from .models import Process
-from .memory_manager import MemoryManager, AllocationResult
+from .memory_manager import MemoryManager, AllocationResult, MemoryBlock
 from .scheduler import Scheduler, FCFS, SJF, SRTF, RoundRobin
 
 class SimulationMetrics:
@@ -54,6 +54,8 @@ class SimulationEngine:
         
         self.architecture = architecture
         self.scheduling_alg_name = scheduling_alg
+        self.quantum = quantum
+        self.auto_create_processes = True
         
         # Multiprocessor: 4 CPUs
         self.cpus: List[Optional[Process]] = [None] * 4
@@ -173,6 +175,16 @@ class SimulationEngine:
                 if p.state == "TERMINATED":
                     self.release_process(p)
                     self.cpus[i] = None
+                elif self.scheduling_alg_name == "RR":
+                    p.quantum_used += 1
+                    if p.quantum_used >= self.quantum:
+                        # Preempt process
+                        p.state = "READY"
+                        p.quantum_used = 0
+                        p.cpu_id = None
+                        self.scheduler.add_process(p)
+                        self.cpus[i] = None
+                        self.log_interrupt(f"Process {p.name} preempted (Quantum expired).")
 
         # 2. Fill empty CPUs
         for i in range(len(self.cpus)):
@@ -212,7 +224,7 @@ class SimulationEngine:
     def tick(self):
         self.tick_count += 1
         # probability create new process
-        if random.random() < 0.3:  # 30% chance
+        if self.auto_create_processes and random.random() < 0.3:  # 30% chance
             self.create_process()
         self.update_processes()
 
@@ -236,3 +248,29 @@ class SimulationEngine:
                 'efficiency': self.managers[alg].efficiency()
             }
         return stats
+
+    def reset(self):
+        self.processes.clear()
+        self.metrics = SimulationMetrics()
+        self.tick_count = 0
+        self.cpus = [None] * 4
+        self.interrupt_log.clear()
+        
+        # Reset memory managers
+        for manager in self.managers.values():
+            manager.blocks = [MemoryBlock(0, manager.total_mb, None)]
+            manager.allocated_processes.clear()
+            
+        # Reset scheduler
+        if self.scheduling_alg_name == "FCFS":
+            self.scheduler = FCFS()
+        elif self.scheduling_alg_name == "SJF":
+            self.scheduler = SJF()
+        elif self.scheduling_alg_name == "SRTF":
+            self.scheduler = SRTF()
+        elif self.scheduling_alg_name == "RR":
+            self.scheduler = RoundRobin(quantum=self.quantum)
+        else:
+            self.scheduler = FCFS()
+            
+        self.log_interrupt("Simulation reset.")

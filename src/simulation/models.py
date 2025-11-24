@@ -23,10 +23,18 @@ class Process:
     finish_tick: Optional[int] = None
     waiting_ticks: int = 0
     cpu_id: Optional[int] = None  # ID of the CPU running this process
+    quantum_used: int = 0 # Ticks used in current quantum (for RR)
     
     def tick(self):
         if self.state == "TERMINATED":
             return
+            
+        if self.state == "RUNNING":
+            self.remaining_ticks -= 1
+            if self.remaining_ticks <= 0:
+                self.remaining_ticks = 0
+                self.state = "TERMINATED"
+
         # Simular fluctuación CPU
         self.cpu_usage = max(0.0, min(100.0, self.cpu_usage + random.uniform(-10, 10)))
         # Logic moved to Engine/Scheduler to control execution flow
