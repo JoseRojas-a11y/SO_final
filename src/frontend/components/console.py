@@ -49,8 +49,8 @@ class ConsoleWidget(QWidget):
             elif cmd == "pause":
                 self.main_window.pause_simulation()
                 self.print_msg("Simulación pausada.")
-            elif cmd == "star":
-                self.main_window.active_simulation()
+            elif cmd == "start" or cmd == "resume":
+                self.main_window.resume_simulation()
                 self.print_msg("Simulación reanudada.")
             elif cmd == "speed":
                 self.cmd_speed(args)
@@ -85,12 +85,11 @@ help                            : Muestra esta ayuda
         try:
             size = int(args[0])
             duration = int(args[1])
-            priority = int(args[2]) if len(args) > 2 else 0
+            priority = int(args[2]) if len(args) > 2 else None
             
-            p = self.engine.manual_create_process(size, duration)
-            p.priority = priority 
+            p = self.engine.manual_create_process(size, duration, priority)
             
-            self.print_msg(f"Proceso {p.name} creado (PID {p.pid}, {size}MB, {duration}t, Prio {priority})")
+            self.print_msg(f"Proceso {p.name} creado (PID {p.pid}, {size}MB, {duration}t, Prio {p.priority})")
         except ValueError:
             self.print_msg("Error: Los argumentos deben ser números enteros.")
 
