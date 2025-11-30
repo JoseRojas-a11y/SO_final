@@ -1,7 +1,7 @@
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
     QLabel, QFrame, QSizePolicy, QGridLayout, QGroupBox, QHeaderView, QDialog, QComboBox, QPushButton, QSpinBox, QFormLayout,
-    QStackedWidget, QListWidget, QLineEdit, QTextEdit
+    QStackedWidget, QListWidget, QLineEdit, QTextEdit, QScrollArea, QCheckBox, QSplitter
 )
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QColor, QPalette, QAction
@@ -98,11 +98,14 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(central)
         main_layout = QHBoxLayout(central) # Main layout is horizontal: Menu | Content
 
-        # --- Navigation Menu (Right Side as requested, but standard is Left. User asked Right? "parte derecha") ---
-        # User said "parte derecha" (right side).
+        # --- Content Area - Dynamic based on selection ---
+        self.content_widget = QWidget()
+        self.content_layout = QVBoxLayout(self.content_widget)
+        self.content_layout.setContentsMargins(0, 0, 0, 0)
         
-        # Content Area (Stacked Widget)
-        self.stack = QStackedWidget()
+        # Page inicial vacía (solo fondo)
+        self.page_empty = QWidget()
+        self.page_empty.setStyleSheet("background-color: #2b2b2b;")
         
         # Page 1: Process Management
         self.page_processes = QWidget()
@@ -197,22 +200,31 @@ class MainWindow(QMainWindow):
             header_stats.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         mem_layout_page.addWidget(self.group_box("Comparativa Memoria", self.stats_table))
 
-
-        # Add pages to stack
-        self.stack.addWidget(self.page_processes)
-        self.stack.addWidget(self.page_memory)
+        # Estado de selección
+        self.processes_selected = False
+        self.memory_selected = False
+        self.selection_order = []  # Para mantener el orden de selección
+        
+        # Inicialmente mostrar página vacía
+        self.content_layout.addWidget(self.page_empty)
 
         # Navigation & Console (Right Side)
         right_widget = QWidget()
         right_layout = QVBoxLayout(right_widget)
         
-        self.nav_list = QListWidget()
-        self.nav_list.addItem("Gestión de Procesos")
-        self.nav_list.addItem("Gestión de Memoria")
-        self.nav_list.currentRowChanged.connect(self.stack.setCurrentIndex)
-        self.nav_list.setCurrentRow(0)
+        # Usar checkboxes en lugar de lista
+        nav_group = QGroupBox("Navegación")
+        nav_layout = QVBoxLayout(nav_group)
         
-        right_layout.addWidget(self.nav_list)
+        self.checkbox_processes = QCheckBox("Gestión de Procesos")
+        self.checkbox_processes.stateChanged.connect(self.on_navigation_changed)
+        nav_layout.addWidget(self.checkbox_processes)
+        
+        self.checkbox_memory = QCheckBox("Gestión de Memoria")
+        self.checkbox_memory.stateChanged.connect(self.on_navigation_changed)
+        nav_layout.addWidget(self.checkbox_memory)
+        
+        right_layout.addWidget(nav_group)
         
         # Simulation Controls
         controls_group = QGroupBox("Control Simulación")
@@ -246,12 +258,126 @@ class MainWindow(QMainWindow):
         right_widget.setFixedWidth(300)
 
         # Add to main layout
-        main_layout.addWidget(self.stack)
+        main_layout.addWidget(self.content_widget)
         main_layout.addWidget(right_widget)
 
         # Timer
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.on_tick)
+
+    def on_navigation_changed(self):
+        """Maneja los cambios en los checkboxes de navegación"""
+        processes_checked = self.checkbox_processes.isChecked()
+        memory_checked = self.checkbox_memory.isChecked()
+        
+        # Actualizar estado y orden de selección
+        if processes_checked and not self.processes_selected:
+            self.selection_order.append("processes")
+            self.processes_selected = True
+        elif not processes_checked and self.processes_selected:
+            self.selection_order.remove("processes")
+            self.processes_selected = False
+            
+        if memory_checked and not self.memory_selected:
+            self.selection_order.append("memory")
+            self.memory_selected = True
+        elif not memory_checked and self.memory_selected:
+            self.selection_order.remove("memory")
+            self.memory_selected = False
+        
+        # Actualizar la vista
+        self.update_content_view()
+    
+    def update_content_view(self):
+        """Actualiza la vista del contenido según las selecciones"""
+        # Limpiar el layout actual y remover widgets de sus contenedores anteriores
+        while self.content_layout.count():
+            item = self.content_layout.takeAt(0)
+            widget = item.widget()
+            if widget:
+                # Si es un QScrollArea, remover su widget primero para liberarlo
+                if isinstance(widget, QScrollArea):
+                    content_widget = widget.takeWidget()
+                    if content_widget:
+                        content_widget.setParent(self.content_widget)
+                elif isinstance(widget, QSplitter):
+                    # Remover widgets del splitter
+                    for i in range(widget.count()):
+                        child = widget.widget(i)
+                        if isinstance(child, QScrollArea):
+                            content_widget = child.takeWidget()
+                            if content_widget:
+                                content_widget.setParent(self.content_widget)
+                # No eliminar page_empty, solo los contenedores
+                if widget != self.page_empty:
+                    widget.setParent(None)
+                    widget.deleteLater()
+        
+        # Asegurarse de que los widgets de contenido tengan el parent correcto
+        self.page_processes.setParent(self.content_widget)
+        self.page_memory.setParent(self.content_widget)
+        self.page_empty.setParent(self.content_widget)
+        
+        if not self.processes_selected and not self.memory_selected:
+            # Mostrar página vacía
+            self.content_layout.addWidget(self.page_empty)
+        elif self.processes_selected and not self.memory_selected:
+            # Mostrar solo gestión de procesos
+            scroll = QScrollArea()
+            scroll.setWidget(self.page_processes)
+            scroll.setWidgetResizable(True)
+            scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+            scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+            self.content_layout.addWidget(scroll)
+        elif not self.processes_selected and self.memory_selected:
+            # Mostrar solo gestión de memoria
+            scroll = QScrollArea()
+            scroll.setWidget(self.page_memory)
+            scroll.setWidgetResizable(True)
+            scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+            scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+            self.content_layout.addWidget(scroll)
+        else:
+            # Mostrar ambas, divididas verticalmente
+            splitter = QSplitter(Qt.Orientation.Vertical)
+            
+            # Determinar el orden según la primera selección
+            if len(self.selection_order) > 0 and self.selection_order[0] == "processes":
+                # Procesos arriba, memoria abajo
+                scroll_processes = QScrollArea()
+                scroll_processes.setWidget(self.page_processes)
+                scroll_processes.setWidgetResizable(True)
+                scroll_processes.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+                scroll_processes.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+                
+                scroll_memory = QScrollArea()
+                scroll_memory.setWidget(self.page_memory)
+                scroll_memory.setWidgetResizable(True)
+                scroll_memory.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+                scroll_memory.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+                
+                splitter.addWidget(scroll_processes)
+                splitter.addWidget(scroll_memory)
+            else:
+                # Memoria arriba, procesos abajo
+                scroll_memory = QScrollArea()
+                scroll_memory.setWidget(self.page_memory)
+                scroll_memory.setWidgetResizable(True)
+                scroll_memory.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+                scroll_memory.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+                
+                scroll_processes = QScrollArea()
+                scroll_processes.setWidget(self.page_processes)
+                scroll_processes.setWidgetResizable(True)
+                scroll_processes.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+                scroll_processes.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+                
+                splitter.addWidget(scroll_memory)
+                splitter.addWidget(scroll_processes)
+            
+            # Configurar tamaños iguales
+            splitter.setSizes([400, 400])
+            self.content_layout.addWidget(splitter)
 
     def group_box(self, title: str, widget: QWidget) -> QGroupBox:
         box = QGroupBox(title)
