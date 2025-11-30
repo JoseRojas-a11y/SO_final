@@ -98,14 +98,6 @@ class MainWindow(QMainWindow):
             header_stats.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         mem_layout_page.addWidget(self.group_box("Comparativa Memoria", self.stats_table))
 
-        # Tabla de estadísticas de paginación
-        self.paging_table = QTableWidget(0, 5)
-        self.paging_table.setHorizontalHeaderLabels(["Algoritmo", "Page Faults", "Page Hits", "Tasa Faults %", "Utilización %"])
-        header_paging = self.paging_table.horizontalHeader()
-        if header_paging:
-            header_paging.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        mem_layout_page.addWidget(self.group_box("Estadísticas de Paginación", self.paging_table))
-
 
         # Add pages to stack
         self.stack.addWidget(self.page_processes)
@@ -179,7 +171,6 @@ class MainWindow(QMainWindow):
         self.refresh_process_table()
         self.refresh_memory()
         self.refresh_stats_table()
-        self.refresh_paging_table()
         self.refresh_global_stats()
         self.refresh_cpu_status()
         self.refresh_interrupt_log()
@@ -243,19 +234,6 @@ class MainWindow(QMainWindow):
                 f"{s['success_rate']*100:.1f}",
                 f"{s['fragmentation']*100:.2f}",
                 f"{s['efficiency']*100:.2f}"
-            ])
-    
-    def refresh_paging_table(self):
-        """Actualiza la tabla de estadísticas de paginación."""
-        stats = self.engine.paging_stats()
-        self.paging_table.setRowCount(len(stats))
-        for r, (alg, s) in enumerate(stats.items()):
-            self.set_row(self.paging_table, r, [
-                alg,
-                s['total_page_faults'],
-                s['total_hits'],
-                f"{s['page_fault_rate']*100:.2f}",
-                f"{s['memory_utilization']*100:.1f}"
             ])
             
     def refresh_global_stats(self):
@@ -336,7 +314,6 @@ class MainWindow(QMainWindow):
         self.refresh_process_table()
         self.refresh_memory()
         self.refresh_stats_table()
-        self.refresh_paging_table()
         self.refresh_global_stats()
         self.refresh_cpu_status()
         self.refresh_interrupt_log()
