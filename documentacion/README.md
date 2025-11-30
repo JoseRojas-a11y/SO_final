@@ -18,9 +18,14 @@ simulados**.
 -   `03_arquitectura_SO.md` --- Arquitectura de un sistema operativo:
     monolítico, microkernel, modular; control de interrupciones,
     syscalls, memoria y dispositivos.
--   Código fuente (a desarrollar):\
-    `kernel/`, `cpu/`, `scheduler/`, `devices/`, `mmu/`,
-    `user_programs/`.
+-   `04_gestion_memoria_avanzada.md` --- Gestión avanzada de memoria:
+    autocompactación automática y sistema de paginación con algoritmos
+    de reemplazo (FIFO, LRU, Optimal).
+-   `05_prioridades_procesos.md` --- Sistema de prioridades de procesos:
+    asignación automática, algoritmos de planificación basados en prioridades,
+    aging y preemption.
+-   Código fuente:\
+    `src/simulation/`, `src/frontend/`, `run.py`.
 
 ## Objetivo del proyecto
 
@@ -177,7 +182,18 @@ El proyecto ha sido actualizado para incluir:
   - Motor centralizado en `engine.py` para coordinar la planificación y ejecución.
   - Estrategias de planificación como Round Robin y SJF implementadas en `strategies.py`.
 
-Estos cambios mejoran la mantenibilidad, escalabilidad y precisión de la simulación.
+- **Gestión avanzada de memoria (ver `04_gestion_memoria_avanzada.md`):**
+  - Autocompactación automática de memoria con parámetros configurables.
+  - Sistema completo de paginación con tres algoritmos de reemplazo (FIFO, LRU, Optimal).
+  - Visualización de estadísticas de paginación en tiempo real.
+
+- **Sistema de prioridades (ver `05_prioridades_procesos.md`):**
+  - Asignación automática de prioridades basada en características del proceso.
+  - Algoritmos de planificación por prioridades (Priority, PriorityRR).
+  - Mecanismo de aging para evitar inanición.
+  - Modificación de algoritmos existentes para considerar prioridades.
+
+Estos cambios mejoran la mantenibilidad, escalabilidad y precisión de la simulación, acercándola más a sistemas operativos reales.
 
 ## Cómo usar este README
 
