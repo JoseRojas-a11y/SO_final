@@ -65,3 +65,13 @@ leve o estricta.
 
 La planificación es un proceso reactivo a: - interrupciones, -
 finalización de ráfagas, - retorno de I/O.
+
+## 6. Cambios recientes en la implementación
+
+Se ha actualizado el motor de simulación para incluir:
+
+- Modularización del planificador en `scheduler.py`.
+- Implementación de estrategias de planificación como Round Robin y SJF en `strategies.py`.
+- Integración con un motor centralizado en `engine.py` para coordinar la planificación y ejecución de procesos.
+
+Estos cambios mejoran la flexibilidad y permiten añadir nuevas políticas de planificación de manera sencilla.

@@ -164,7 +164,20 @@ ________________________________________
  
 5.	Añadir visualización (gráficos de Gantt) y trazas.
 
+## Cambios recientes
 
+El proyecto ha sido actualizado para incluir:
+
+- **Modularización del código:**
+  - Manejo de memoria dividido en `manager.py` y `strategies.py`.
+  - Componentes de la interfaz gráfica separados en archivos como `memory_bar.py` y `console.py`.
+  - Simplificación del archivo principal `gui.py`.
+
+- **Mejoras en la simulación:**
+  - Motor centralizado en `engine.py` para coordinar la planificación y ejecución.
+  - Estrategias de planificación como Round Robin y SJF implementadas en `strategies.py`.
+
+Estos cambios mejoran la mantenibilidad, escalabilidad y precisión de la simulación.
 
 ## Cómo usar este README
 

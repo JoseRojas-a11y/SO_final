@@ -3,43 +3,10 @@ import time
 import hashlib
 from typing import Dict, List, Optional
 from .models import Process
-from .memory_manager import MemoryManager, AllocationResult, MemoryBlock
+from .memory.manager import MemoryManager, AllocationResult, MemoryBlock
+from .memory.strategies import FirstFitStrategy, BestFitStrategy, WorstFitStrategy
+from .metrics import SimulationMetrics
 from .scheduler import Scheduler, FCFS, SJF, SRTF, RoundRobin
-
-class SimulationMetrics:
-    def __init__(self):
-        self.alloc_attempts: Dict[str, int] = {"first":0, "best":0, "worst":0}
-        self.alloc_success: Dict[str, int] = {"first":0, "best":0, "worst":0}
-        self.fragmentation: Dict[str, float] = {"first":0.0, "best":0.0, "worst":0.0}
-        self.efficiency: Dict[str, float] = {"first":0.0, "best":0.0, "worst":0.0}
-        
-        # Process metrics
-        self.total_processes = 0
-        self.completed_processes = 0
-        self.total_turnaround_time = 0
-        self.total_waiting_time = 0
-        self.cpu_busy_ticks = 0
-
-    def update(self, result: AllocationResult):
-        alg = result.algorithm
-        self.alloc_attempts[alg] += 1
-        if result.success:
-            self.alloc_success[alg] += 1
-        # moving average simple
-        self.fragmentation[alg] = (self.fragmentation[alg]*0.9) + (result.fragmentation*0.1)
-        self.efficiency[alg] = (self.efficiency[alg]*0.9) + (result.efficiency*0.1)
-        
-    def record_process_completion(self, p: Process, current_tick: int):
-        self.completed_processes += 1
-        turnaround = current_tick - p.arrival_tick
-        self.total_turnaround_time += turnaround
-        self.total_waiting_time += p.waiting_ticks
-
-    def success_rate(self, alg: str) -> float:
-        attempts = self.alloc_attempts[alg]
-        if attempts == 0:
-            return 0.0
-        return self.alloc_success[alg] / attempts
 
 INTERRUPCIONES_WAITING = [
     "IO",
@@ -85,9 +52,9 @@ def tipo_interrupcion(pid: int, tick: int, seed: int = 0) -> str:
 class SimulationEngine:
     def __init__(self, total_memory_mb: int = 256, architecture: str = "Monolithic", scheduling_alg: str = "FCFS", quantum: int = 4):
         self.managers: Dict[str, MemoryManager] = {
-            'first': MemoryManager(total_memory_mb, 'first'),
-            'best': MemoryManager(total_memory_mb, 'best'),
-            'worst': MemoryManager(total_memory_mb, 'worst')
+            'first': MemoryManager(total_memory_mb, 'first', FirstFitStrategy()),
+            'best': MemoryManager(total_memory_mb, 'best', BestFitStrategy()),
+            'worst': MemoryManager(total_memory_mb, 'worst', WorstFitStrategy())
         }
         self.processes: Dict[int, Process] = {}
         self.metrics = SimulationMetrics()
@@ -141,6 +108,9 @@ class SimulationEngine:
         else:
             p.state = "TERMINATED"
             self.log_interrupt(f"Process {p.name} creation failed (Memory Full).")
+            # Release memory from any manager that might have allocated (e.g. best/worst) even if first failed
+            for manager in self.managers.values():
+                manager.release(p)
             
         return p
 
@@ -166,6 +136,9 @@ class SimulationEngine:
             self.log_interrupt(f"Process {p.name} created (Auto).")
         else:
             p.state = "TERMINATED" # Rejected due to memory
+            # Release memory from any manager that might have allocated (e.g. best/worst) even if first failed
+            for manager in self.managers.values():
+                manager.release(p)
             
         return p
 
