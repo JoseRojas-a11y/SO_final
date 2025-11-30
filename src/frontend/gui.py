@@ -141,10 +141,20 @@ class MainWindow(QMainWindow):
             header.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         proc_layout.addWidget(self.group_box("Procesos Activos", self.process_table))
         
+        # Queue and Interrupt Log (divided in two)
+        queue_interrupt_layout = QHBoxLayout()
+        
+        # Cola de procesos
+        self.process_queue_list = QListWidget()
+        queue_interrupt_layout.addWidget(self.group_box("Cola de procesos", self.process_queue_list), 1)
+        
         # Interrupt Log
         self.interrupt_list = QListWidget()
-        self.interrupt_list.setMaximumHeight(150)
-        proc_layout.addWidget(self.group_box("Registro de Interrupciones", self.interrupt_list))
+        queue_interrupt_layout.addWidget(self.group_box("Registro de Interrupciones", self.interrupt_list), 1)
+        
+        queue_interrupt_widget = QWidget()
+        queue_interrupt_widget.setLayout(queue_interrupt_layout)
+        proc_layout.addWidget(queue_interrupt_widget, 1)  # Factor de estiramiento para ocupar espacio disponible
         
         # Global Stats in Process Page
         self.global_stats_label = QLabel("Métricas Globales: ...")
@@ -262,6 +272,7 @@ class MainWindow(QMainWindow):
         self.refresh_global_stats()
         self.refresh_cpu_status()
         self.refresh_interrupt_log()
+        self.refresh_process_queue()
 
     def refresh_cpu_status(self):
         for i, lbl in enumerate(self.cpu_labels):
@@ -281,6 +292,48 @@ class MainWindow(QMainWindow):
             for msg in self.engine.interrupt_log:
                 self.interrupt_list.addItem(msg)
             self.interrupt_list.scrollToBottom()
+
+    def refresh_process_queue(self):
+        """Actualiza la visualización de las colas de procesos (ready, running, waiting)"""
+        self.process_queue_list.clear()
+        
+        scheduler = self.engine.scheduler
+        
+        # Ready Queue
+        if hasattr(scheduler, 'rr_queue'):
+            # RoundRobin usa rr_queue
+            ready_processes = list(scheduler.rr_queue)
+        else:
+            # Otros schedulers usan ready_queue
+            ready_processes = list(scheduler.ready_queue)
+        
+        self.process_queue_list.addItem("=== READY QUEUE ===")
+        if ready_processes:
+            for p in ready_processes:
+                self.process_queue_list.addItem(f"  {p.name} (PID {p.pid}) - Restante: {p.remaining_ticks}")
+        else:
+            self.process_queue_list.addItem("  (vacía)")
+        
+        # Running Queue (procesos en CPUs)
+        self.process_queue_list.addItem("")
+        self.process_queue_list.addItem("=== RUNNING QUEUE ===")
+        running_processes = [p for p in self.engine.cpus if p is not None]
+        if running_processes:
+            for i, p in enumerate(self.engine.cpus):
+                if p is not None:
+                    self.process_queue_list.addItem(f"  {p.name} (PID {p.pid}) - CPU {i} - Restante: {p.remaining_ticks}")
+        else:
+            self.process_queue_list.addItem("  (vacía)")
+        
+        # Waiting Queue (procesos en estado WAITING)
+        self.process_queue_list.addItem("")
+        self.process_queue_list.addItem("=== WAITING QUEUE ===")
+        waiting_processes = [p for p in self.engine.active_processes() if p.state == "WAITING"]
+        if waiting_processes:
+            for p in waiting_processes:
+                self.process_queue_list.addItem(f"  {p.name} (PID {p.pid}) - Restante: {p.remaining_ticks}")
+        else:
+            self.process_queue_list.addItem("  (vacía)")
 
     def refresh_process_table(self):
         processes = self.engine.active_processes()
@@ -394,6 +447,7 @@ class MainWindow(QMainWindow):
         self.refresh_global_stats()
         self.refresh_cpu_status()
         self.refresh_interrupt_log()
+        self.refresh_process_queue()
         self.console.print_msg("Simulación reiniciada.")
 
     def set_speed(self, ms: int):

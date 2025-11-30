@@ -1,5 +1,6 @@
 import random
 import time
+import hashlib
 from typing import Dict, List, Optional
 from .models import Process
 from .memory_manager import MemoryManager, AllocationResult, MemoryBlock
@@ -39,6 +40,47 @@ class SimulationMetrics:
         if attempts == 0:
             return 0.0
         return self.alloc_success[alg] / attempts
+
+INTERRUPCIONES_WAITING = [
+    "IO",
+    "SEMAPHORE_BLOCK",
+    "JOIN_WAIT",
+    "COND_WAIT",
+    "PAGE_FAULT",
+]
+
+def probabilidad_interrupcion(pid: int, tick: int) -> float:
+    """Calcula la probabilidad de interrupción basada en hash del PID y tick."""
+    key = f"{pid}-{tick}"
+    h = hashlib.sha256(key.encode()).hexdigest()
+    x = int(h[:8], 16)   # tomamos 32 bits del hash
+    return x / 0xFFFFFFFF
+
+def tiempo_io(pid: int, min_io: int = 3, max_io: int = 15) -> int:
+    """Calcula el tiempo de I/O basado en hash del PID."""
+    h = hashlib.sha256(str(pid).encode()).hexdigest()
+    x = int(h[:8], 16)                      # 32 bits del hash
+    r = x % (max_io - min_io + 1)
+    return min_io + r
+
+def tipo_interrupcion(pid: int, tick: int, seed: int = 0) -> str:
+    """
+    Devuelve determinísticamente un tipo de interrupción
+    que enviará al proceso a la cola Waiting.
+    """
+    # Mezcla PID, tick y semilla
+    clave = f"{pid}-{tick}-{seed}"
+    
+    # Hash SHA-256 (determinista)
+    h = hashlib.sha256(clave.encode()).hexdigest()
+    
+    # Usamos 32 bits del hash para pseudoaleatoriedad
+    x = int(h[:8], 16)
+    
+    # Seleccionamos un tipo de interrupción en la lista
+    idx = x % len(INTERRUPCIONES_WAITING)
+    
+    return INTERRUPCIONES_WAITING[idx]
 
 class SimulationEngine:
     def __init__(self, total_memory_mb: int = 256, architecture: str = "Monolithic", scheduling_alg: str = "FCFS", quantum: int = 4):
@@ -139,6 +181,20 @@ class SimulationEngine:
         # Multiprocessor Scheduling Logic
         # We have 4 CPUs. We need to fill them from the scheduler.
         
+        # 0. Update processes in WAITING state (I/O operations)
+        for p in self.active_processes():
+            if p.state == "WAITING":
+                if p.io_remaining_ticks > 0:
+                    p.io_remaining_ticks -= 1
+                if p.io_remaining_ticks <= 0:
+                    # I/O completed, return to READY
+                    interrupt_type = p.interrupt_type or "WAITING"
+                    p.state = "READY"
+                    p.io_remaining_ticks = 0
+                    p.interrupt_type = None  # Clear interrupt type
+                    self.scheduler.add_process(p)
+                    self.log_interrupt(f"Process {p.name} {interrupt_type} completed, returning to READY queue.")
+        
         # 1. Check running processes on CPUs
         for i in range(len(self.cpus)):
             p = self.cpus[i]
@@ -159,6 +215,22 @@ class SimulationEngine:
                 
                 if p.state == "TERMINATED":
                     self.cpus[i] = None
+                    continue
+                
+                # Check for random interruption based on hash
+                prob = probabilidad_interrupcion(p.pid, self.tick_count)
+                if prob > 0.95:  # 5% chance of interruption (top 5% of hash values)
+                    # Interrupt process and send to WAITING
+                    interrupt_type = tipo_interrupcion(p.pid, self.tick_count)
+                    io_time = tiempo_io(p.pid)
+                    p.state = "WAITING"
+                    p.io_remaining_ticks = io_time
+                    p.io_total_ticks = io_time
+                    p.interrupt_type = interrupt_type
+                    p.cpu_id = None
+                    p.quantum_used = 0  # Reset quantum if interrupted
+                    self.cpus[i] = None
+                    self.log_interrupt(f"Process {p.name} interrupted ({interrupt_type}).")
                     continue
                 
                 # Check if it should yield (e.g. RR quantum)
