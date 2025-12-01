@@ -1,7 +1,8 @@
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
     QLabel, QFrame, QGroupBox, QHeaderView, QDialog, QPushButton, QSpinBox, QFormLayout,
-    QListWidget, QGridLayout, QCheckBox, QScrollArea, QLayoutItem
+    QListWidget, QGridLayout, QCheckBox, QScrollArea, QLayoutItem, QAbstractItemView,
+    QListWidgetItem
 )
 from PyQt6.QtCore import Qt, QTimer
 from ...simulation.engine import SimulationEngine
@@ -76,8 +77,7 @@ class MainWindow(QMainWindow):
         right_layout = QVBoxLayout(right_widget)
         right_layout.setSpacing(3)
         right_layout.setContentsMargins(2, 2, 2, 2)
-        
-        # Checkboxes en lugar de ListWidget
+        # Checkboxes de Navegación
         nav_group = QGroupBox("Opciones")
         nav_layout = QVBoxLayout(nav_group)
         nav_layout.setSpacing(2)
@@ -106,13 +106,14 @@ class MainWindow(QMainWindow):
         
         # Panel de Control de Módulos (visible según arquitectura)
         if engine.architecture == "Modular":
-            arch_control_group = QGroupBox("🔧 Control de Módulos Dinámicos")
+            arch_control_group = QGroupBox("🔧 Módulos del Sistema")
             arch_control_layout = QVBoxLayout(arch_control_group)
             arch_control_layout.setSpacing(2)
             arch_control_layout.setContentsMargins(4, 4, 4, 4)
             
             self.modules_list = QListWidget()
-            self.modules_list.setMaximumHeight(70)
+            self.modules_list.setMaximumHeight(120)
+            self.modules_list.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
             arch_control_layout.addWidget(QLabel("Módulos Cargados:"))
             arch_control_layout.addWidget(self.modules_list)
             
@@ -286,7 +287,9 @@ class MainWindow(QMainWindow):
             for module_id, module in self.engine.dynamic_modules.items():
                 removable = "⚡" if module.get("removable", False) else "🔒"
                 status_icon = "✓" if module.get("status") == "loaded" else "✗"
-                self.modules_list.addItem(f"{status_icon} {removable} {module.get('name', module_id)}")
+                item = QListWidgetItem(f"{status_icon} {removable} {module.get('name', module_id)}")
+                item.setData(Qt.ItemDataRole.UserRole, module_id)
+                self.modules_list.addItem(item)
         
         # Arquitectura Microkernel eliminada en modo Modular-only
         
@@ -296,7 +299,7 @@ class MainWindow(QMainWindow):
             
     def _update_arch_status(self):
         """Actualiza el texto de estado de la arquitectura."""
-        if not self.engine.is_running and self.engine.ticks == 0:
+        if not self.engine.is_running and self.engine.tick_count == 0:
             self.arch_status_label.setText("Esperando inicio de simulación...")
             return
 

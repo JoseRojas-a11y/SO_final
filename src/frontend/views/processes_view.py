@@ -19,19 +19,6 @@ class ProcessesView(QWidget):
         header_layout.addWidget(QLabel(f"<b>Arquitectura:</b> {arch_name}"))
         root.addLayout(header_layout)
 
-        # CPUs grid (2 columnas) - MOVED TO TOP
-        cpu_group = QGroupBox("CPUs / Multihilos")
-        grid = QGridLayout(cpu_group)
-        self.cpu_blocks = []
-        cpu_count = max(1, len(self.engine.cpus))
-        for i in range(cpu_count):
-            block = self._create_cpu_block(i)
-            self.cpu_blocks.append(block)
-            row = i // 2
-            col = i % 2
-            grid.addWidget(block, row, col)
-        root.addWidget(cpu_group)
-
         # Tabla de procesos
         self.process_table = QTableWidget(0, 9)
         self.process_table.setMinimumHeight(300)
@@ -65,6 +52,19 @@ class ProcessesView(QWidget):
         # Métricas Globales
         self.global_stats_label = QLabel("Métricas del Sistema: ...")
         root.addWidget(self._group("Métricas del Sistema", self.global_stats_label))
+
+        # CPUs grid (2 columnas) - MOVED TO BOTTOM
+        cpu_group = QGroupBox("CPUs / Multihilos")
+        grid = QGridLayout(cpu_group)
+        self.cpu_blocks = []
+        cpu_count = max(1, len(self.engine.cpus))
+        for i in range(cpu_count):
+            block = self._create_cpu_block(i)
+            self.cpu_blocks.append(block)
+            row = i // 2
+            col = i % 2
+            grid.addWidget(block, row, col)
+        root.addWidget(cpu_group)
 
     def _group(self, title: str, w: QWidget) -> QGroupBox:
         g = QGroupBox(title)
