@@ -1,4 +1,4 @@
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QTextEdit, QLineEdit
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QTextEdit, QLineEdit, QSizePolicy
 from ...simulation.engine import SimulationEngine
 
 class ConsoleWidget(QWidget):
@@ -7,19 +7,27 @@ class ConsoleWidget(QWidget):
         self.engine = engine
         self.main_window = main_window
         
+        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
+        
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0,0,0,0)
+        layout.setSpacing(2)
         
         self.output = QTextEdit()
         self.output.setReadOnly(True)
         self.output.setStyleSheet("background-color: #1e1e1e; color: #00FF00; font-family: Consolas; font-size: 10pt;")
+        self.output.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         layout.addWidget(self.output)
         
         self.input = QLineEdit()
         self.input.setPlaceholderText("Escriba un comando (ej: help)...")
         self.input.setStyleSheet("background-color: #333; color: white; font-family: Consolas; font-size: 10pt;")
+        self.input.setMinimumHeight(30)
+        self.input.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.input.returnPressed.connect(self.process_command)
         layout.addWidget(self.input)
+        
+        self.setMinimumHeight(120)
         
         self.print_msg("=== Terminal de Control SO ===")
         self.print_msg("Escriba 'help' para ver la lista de comandos.")

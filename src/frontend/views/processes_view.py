@@ -19,6 +19,19 @@ class ProcessesView(QWidget):
         header_layout.addWidget(QLabel(f"<b>Arquitectura:</b> {arch_name}"))
         root.addLayout(header_layout)
 
+        # CPUs grid (2 columnas) - MOVED TO TOP
+        cpu_group = QGroupBox("CPUs / Multihilos")
+        grid = QGridLayout(cpu_group)
+        self.cpu_blocks = []
+        cpu_count = max(1, len(self.engine.cpus))
+        for i in range(cpu_count):
+            block = self._create_cpu_block(i)
+            self.cpu_blocks.append(block)
+            row = i // 2
+            col = i % 2
+            grid.addWidget(block, row, col)
+        root.addWidget(cpu_group)
+
         # Tabla de procesos
         self.process_table = QTableWidget(0, 9)
         self.process_table.setMinimumHeight(300)
@@ -53,20 +66,6 @@ class ProcessesView(QWidget):
         self.global_stats_label = QLabel("Métricas del Sistema: ...")
         root.addWidget(self._group("Métricas del Sistema", self.global_stats_label))
 
-        
-        # CPUs grid (2 columnas)
-        cpu_group = QGroupBox("CPUs / Multihilos")
-        grid = QGridLayout(cpu_group)
-        self.cpu_blocks = []
-        cpu_count = max(1, len(self.engine.cpus))
-        for i in range(cpu_count):
-            block = self._create_cpu_block(i)
-            self.cpu_blocks.append(block)
-            row = i // 2
-            col = i % 2
-            grid.addWidget(block, row, col)
-        root.addWidget(cpu_group)
-
     def _group(self, title: str, w: QWidget) -> QGroupBox:
         g = QGroupBox(title)
         l = QVBoxLayout(g)
@@ -96,6 +95,8 @@ class ProcessesView(QWidget):
             thread_label = block.findChild(QLabel, f"cpu_threads_{i}")
             proc_label = block.findChild(QLabel, f"cpu_proc_{i}")
             alg_combo = block.findChild(QComboBox, f"cpu_alg_combo_{i}")
+            quantum_spin = block.findChild(QSpinBox, f"cpu_quantum_spin_{i}")
+            quantum_label = block.findChild(QLabel, f"cpu_quantum_label_{i}")
             thread_spin = block.findChild(QSpinBox, f"cpu_thread_spin_{i}")
             if title_label:
                 title_label.setText(f"CPU {i + 1}")
@@ -113,6 +114,23 @@ class ProcessesView(QWidget):
                     alg_combo.setCurrentIndex(idx)
                 # Disable while running
                 alg_combo.setEnabled(not getattr(self.engine, 'is_running', False))
+            
+            if quantum_spin and quantum_label:
+                current_alg = per_cpu_alg or alg
+                if current_alg in ["RR", "PriorityRR"]:
+                    quantum_spin.setVisible(True)
+                    quantum_label.setVisible(True)
+                    if hasattr(self.engine, "schedulers") and i < len(self.engine.schedulers):
+                        sched = self.engine.schedulers[i]
+                        if hasattr(sched, "quantum"):
+                            quantum_spin.blockSignals(True)
+                            quantum_spin.setValue(sched.quantum)
+                            quantum_spin.blockSignals(False)
+                else:
+                    quantum_spin.setVisible(False)
+                    quantum_label.setVisible(False)
+                quantum_spin.setEnabled(not getattr(self.engine, 'is_running', False))
+
             if thread_spin:
                 thread_spin.setValue(cpu.thread_capacity)
                 thread_spin.setEnabled(not getattr(self.engine, 'is_running', False))
@@ -144,6 +162,7 @@ class ProcessesView(QWidget):
         alg_combo.addItems(["FCFS", "SJF", "SRTF", "RR", "Priority", "PriorityRR"])
         alg_combo.currentTextChanged.connect(lambda name, i=idx: self._on_change_cpu_alg(i, name))
         ctrl_row.addWidget(alg_combo)
+        
         thread_spin = QSpinBox()
         thread_spin.setObjectName(f"cpu_thread_spin_{idx}")
         thread_spin.setRange(1, 32)
@@ -151,6 +170,26 @@ class ProcessesView(QWidget):
         thread_spin.valueChanged.connect(lambda val, i=idx: self._on_change_cpu_threads(i, val))
         ctrl_row.addWidget(thread_spin)
         v.addLayout(ctrl_row)
+
+        # Quantum Row
+        quantum_row = QHBoxLayout()
+        quantum_label = QLabel("Quantum:")
+        quantum_label.setObjectName(f"cpu_quantum_label_{idx}")
+        quantum_label.setVisible(False)
+        quantum_row.addWidget(quantum_label)
+
+        quantum_spin = QSpinBox()
+        quantum_spin.setObjectName(f"cpu_quantum_spin_{idx}")
+        quantum_spin.setRange(1, 50)
+        quantum_spin.setValue(4)
+        quantum_spin.setToolTip("Quantum (RR/PriorityRR)")
+        quantum_spin.setVisible(False)
+        quantum_spin.setFixedWidth(60)
+        quantum_spin.valueChanged.connect(lambda val, i=idx: self._on_change_cpu_quantum(i, val))
+        quantum_row.addWidget(quantum_spin)
+        quantum_row.addStretch()
+        v.addLayout(quantum_row)
+
         threads = QLabel("Hilos: 0/0")
         threads.setObjectName(f"cpu_threads_{idx}")
         v.addWidget(threads)
@@ -294,3 +333,8 @@ class ProcessesView(QWidget):
         if hasattr(self.engine, "set_cpu_threads"):
             self.engine.set_cpu_threads(cpu_index, threads)
         self._refresh_cpu_status()
+
+    def _on_change_cpu_quantum(self, cpu_index: int, quantum: int):
+        if hasattr(self.engine, "set_cpu_quantum"):
+            self.engine.set_cpu_quantum(cpu_index, quantum)
+

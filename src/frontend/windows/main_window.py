@@ -74,10 +74,14 @@ class MainWindow(QMainWindow):
         # Navigation & Console (Right Side)
         right_widget = QWidget()
         right_layout = QVBoxLayout(right_widget)
+        right_layout.setSpacing(3)
+        right_layout.setContentsMargins(2, 2, 2, 2)
         
         # Checkboxes en lugar de ListWidget
         nav_group = QGroupBox("Opciones")
         nav_layout = QVBoxLayout(nav_group)
+        nav_layout.setSpacing(2)
+        nav_layout.setContentsMargins(4, 4, 4, 4)
         
         self.checkbox_processes = QCheckBox("Gestión de Procesos")
         self.checkbox_processes.stateChanged.connect(self.on_navigation_changed)
@@ -92,6 +96,8 @@ class MainWindow(QMainWindow):
         # Panel de Estado de Arquitectura (siempre visible)
         arch_status_group = QGroupBox("📊 Estado de Arquitectura")
         arch_status_layout = QVBoxLayout(arch_status_group)
+        arch_status_layout.setSpacing(2)
+        arch_status_layout.setContentsMargins(4, 4, 4, 4)
         self.arch_status_label = QLabel()
         self.arch_status_label.setWordWrap(True)
         self.arch_status_label.setStyleSheet("font-size: 10px;")
@@ -102,9 +108,11 @@ class MainWindow(QMainWindow):
         if engine.architecture == "Modular":
             arch_control_group = QGroupBox("🔧 Control de Módulos Dinámicos")
             arch_control_layout = QVBoxLayout(arch_control_group)
+            arch_control_layout.setSpacing(2)
+            arch_control_layout.setContentsMargins(4, 4, 4, 4)
             
             self.modules_list = QListWidget()
-            self.modules_list.setMaximumHeight(120)
+            self.modules_list.setMaximumHeight(70)
             arch_control_layout.addWidget(QLabel("Módulos Cargados:"))
             arch_control_layout.addWidget(self.modules_list)
             
@@ -122,8 +130,10 @@ class MainWindow(QMainWindow):
             
             layer_flow_group = QGroupBox("📡 Flujo entre Capas (Modular)")
             layer_flow_layout = QVBoxLayout(layer_flow_group)
+            layer_flow_layout.setSpacing(2)
+            layer_flow_layout.setContentsMargins(4, 4, 4, 4)
             self.layer_flow_list = QListWidget()
-            self.layer_flow_list.setMaximumHeight(150)
+            self.layer_flow_list.setMaximumHeight(90)
             layer_flow_layout.addWidget(QLabel("Últimas interacciones:"))
             layer_flow_layout.addWidget(self.layer_flow_list)
             right_layout.addWidget(layer_flow_group)
@@ -131,8 +141,10 @@ class MainWindow(QMainWindow):
             # Panel de Módulos Externos para Microkernel
             ext_modules_group = QGroupBox("🔌 Módulos Externos")
             ext_modules_layout = QVBoxLayout(ext_modules_group)
+            ext_modules_layout.setSpacing(2)
+            ext_modules_layout.setContentsMargins(4, 4, 4, 4)
             self.ext_modules_list = QListWidget()
-            self.ext_modules_list.setMaximumHeight(120)
+            self.ext_modules_list.setMaximumHeight(70)
             ext_modules_layout.addWidget(QLabel("Servicios Externos:"))
             ext_modules_layout.addWidget(self.ext_modules_list)
             right_layout.addWidget(ext_modules_group)
@@ -140,6 +152,8 @@ class MainWindow(QMainWindow):
         # Simulation Controls
         controls_group = QGroupBox("Control Simulación")
         controls_layout = QGridLayout(controls_group)
+        controls_layout.setSpacing(2)
+        controls_layout.setContentsMargins(4, 4, 4, 4)
         
         self.btn_pause_resume = QPushButton("Activar")
         self.btn_pause_resume.setStyleSheet("background-color: #00AA00; color: white;")
@@ -165,7 +179,7 @@ class MainWindow(QMainWindow):
         right_layout.addWidget(controls_group)
         
         self.console = ConsoleWidget(self.engine, self)
-        right_layout.addWidget(self.console)
+        right_layout.addWidget(self.console, 1)
         
         right_widget.setFixedWidth(300)
 

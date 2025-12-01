@@ -102,6 +102,13 @@ class SimulationEngine:
         self.is_running: bool = False
 
         self.dynamic_modules: Dict[str, Dict] = {}
+        if self.architecture_name == "Modular":
+            self.dynamic_modules = {
+                "process_core": {"name": "Gestor de Procesos Core", "removable": False, "status": "loaded"},
+                "memory_core": {"name": "Gestor de Memoria Core", "removable": False, "status": "loaded"},
+                "scheduler_mod": {"name": "Módulo de Planificación", "removable": True, "status": "loaded"},
+                "interrupt_handler": {"name": "Manejador de Interrupciones", "removable": True, "status": "loaded"},
+            }
         self._layer_flow: List[str] = []
 
     def _create_scheduler(self, name: str) -> Scheduler:
@@ -225,6 +232,8 @@ class SimulationEngine:
                 break
         if allocated:
             self.log_interrupt(f"Process {process.name} created (Priority: {process.priority}) - Estado: NEW.")
+            if self.architecture == "Modular":
+                self.log_layer_flow("Núcleo Base", "Gestor de Memoria Core", f"alloc:{process.pid}")
         else:
             process.state = "TERMINATED"
             process.finish_tick = self.tick_count
@@ -295,6 +304,8 @@ class SimulationEngine:
                     idx = self._least_loaded_scheduler_index()
                     self.schedulers[idx].add_process(process)
                     self.log_interrupt(f"Process {process.name} (PID {process.pid}) movido de NEW a READY.")
+                    if self.architecture == "Modular":
+                        self.log_layer_flow("Núcleo Base", "Gestor de Procesos Core", f"ready:{process.pid}")
 
     def _update_waiting_processes(self) -> None:
         for process in self.active_processes():
@@ -360,6 +371,8 @@ class SimulationEngine:
                 next_process.start_tick = self.tick_count
             cpu.assign(next_process)
             self.log_interrupt(f"Process {next_process.name} asignado a CPU {cpu.id} con {cpu.thread_capacity} hilos.")
+            if self.architecture == "Modular":
+                self.log_layer_flow("Módulo de Planificación", "Núcleo Base", f"dispatch:{next_process.pid}")
 
     def _update_waiting_times(self) -> None:
         for process in self.active_processes():
@@ -380,6 +393,8 @@ class SimulationEngine:
             process.interrupt_type = "SYSCALL"
             process.io_remaining_ticks = duration
             self.log_interrupt(f"Process {process.name} ejecuta SYSCALL por {duration} ticks.")
+            if self.architecture == "Modular":
+                self.log_layer_flow("Proceso", "Núcleo Base", f"syscall:{pid}")
             return True
         io_prob = _deterministic_probability(pid, self.tick_count, "io")
         if io_prob < process.io_probability:
@@ -391,6 +406,8 @@ class SimulationEngine:
             process.interrupt_type = "IO"
             process.io_remaining_ticks = duration
             self.log_interrupt(f"Process {process.name} entra a I/O por {duration} ticks.")
+            if self.architecture == "Modular":
+                self.log_layer_flow("Proceso", "Manejador de Interrupciones", f"io_req:{pid}")
             return True
         pf_prob = _deterministic_probability(pid, self.tick_count, "pagefault")
         if pf_prob < max(0.02, process.hardware_interrupt_probability):
@@ -428,6 +445,13 @@ class SimulationEngine:
             self.schedulers[index] = self._create_scheduler(name)
             self.scheduler_names[index] = name
             self.log_interrupt(f"CPU {index}: algoritmo -> {name}.")
+
+    def set_cpu_quantum(self, index: int, quantum: int) -> None:
+        if 0 <= index < len(self.schedulers):
+            scheduler = self.schedulers[index]
+            if hasattr(scheduler, 'quantum'):
+                scheduler.quantum = quantum
+                self.log_interrupt(f"CPU {index}: quantum -> {quantum}.")
 
     def set_cpu_threads(self, index: int, threads: int) -> None:
         if self.is_running:
@@ -576,7 +600,7 @@ class SimulationEngine:
         return list(self._layer_flow)
 
     def log_layer_flow(self, source: str, target: str, action: str) -> None:
-        self._layer_flow.append(f"{source} -> {target}: {action}")
+        self._layer_flow.append(f"[Tick {self.tick_count}] {source} → {target}")
         if len(self._layer_flow) > 50:
             self._layer_flow.pop(0)
 
