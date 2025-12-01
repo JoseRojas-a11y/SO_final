@@ -14,7 +14,8 @@ class ConfigDialog(QDialog):
         
         # Número de CPUs
         self.cpu_count_spin = QSpinBox()
-        self.cpu_count_spin.setRange(1, 16)
+        # Límite: mínimo 1, máximo 8 CPUs
+        self.cpu_count_spin.setRange(1, 8)
         self.cpu_count_spin.setValue(4)
         cpu_layout.addRow("Número de CPUs:", self.cpu_count_spin)
 
@@ -29,9 +30,12 @@ class ConfigDialog(QDialog):
         # --- Configuración de Memoria ---
         mem_group = QGroupBox("Configuración de Memoria")
         mem_layout = QFormLayout(mem_group)
+        
+        mem_layout.addRow(QLabel("Ten en cuenta que 16 MB están reservados para el sistema."))
 
         # Memoria: unidades y capacidad por unidad
         self.mem_units_spin = QSpinBox()
+        # Límite: mínimo 1, máximo 8 unidades de memoria
         self.mem_units_spin.setRange(1, 8)
         self.mem_units_spin.setValue(2)
         mem_layout.addRow("Unidades de memoria:", self.mem_units_spin)

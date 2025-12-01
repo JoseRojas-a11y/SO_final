@@ -12,11 +12,18 @@ class AllocationResult:
         self.algorithm = algorithm
 
 class MemoryManager:
-    def __init__(self, total_mb: int, algorithm_name: str, strategy: AllocationStrategy, auto_compact: bool = True, compact_threshold: float = 0.3):
+    def __init__(self, total_mb: int, algorithm_name: str, strategy: AllocationStrategy, auto_compact: bool = True, compact_threshold: float = 0.3, system_reserved_mb: int = 0):
         self.total_mb = total_mb
         self.algorithm = algorithm_name
         self.strategy = strategy
-        self.blocks: List[MemoryBlock] = [MemoryBlock(0, total_mb, None)]
+        self.system_reserved_mb = max(0, min(system_reserved_mb, total_mb))
+        # Crear bloque reservado del sistema si aplica
+        if self.system_reserved_mb > 0:
+            sys_block = MemoryBlock(0, self.system_reserved_mb, 0)  # PID 0 = SO
+            remainder = MemoryBlock(self.system_reserved_mb, total_mb, None)
+            self.blocks: List[MemoryBlock] = [sys_block, remainder]
+        else:
+            self.blocks: List[MemoryBlock] = [MemoryBlock(0, total_mb, None)]
         self.allocated_processes: Dict[int, int] = {}  # pid -> size
         self.auto_compact = auto_compact
         self.compact_threshold = compact_threshold
@@ -87,12 +94,23 @@ class MemoryManager:
     def compact(self):
         allocated_blocks = [b for b in self.blocks if not b.free]
         if not allocated_blocks:
-            self.blocks = [MemoryBlock(0, self.total_mb, None)]
+            # Preservar bloque del sistema si existe
+            if self.system_reserved_mb > 0:
+                sys_block = MemoryBlock(0, self.system_reserved_mb, 0)
+                self.blocks = [sys_block, MemoryBlock(self.system_reserved_mb, self.total_mb, None)]
+            else:
+                self.blocks = [MemoryBlock(0, self.total_mb, None)]
             self.ticks_since_compact = 0
             return
         new_blocks = []
         current_pos = 0
+        # Conservar bloque del sistema al inicio
+        if self.system_reserved_mb > 0:
+            new_blocks.append(MemoryBlock(0, self.system_reserved_mb, 0))
+            current_pos = self.system_reserved_mb
         for block in allocated_blocks:
+            if block.process_pid == 0:  # Saltar bloque sistema ya añadido
+                continue
             size = block.size
             new_b = MemoryBlock(current_pos, current_pos + size, block.process_pid)
             new_blocks.append(new_b)
@@ -118,6 +136,38 @@ class MemoryManager:
     def tick(self):
         if self.auto_compact:
             self.check_and_compact()
+
+    # Expansión monótona del bloque reservado del sistema (nunca reduce)
+    def expand_system_reserved(self, required_mb: int):
+        required_mb = max(0, min(required_mb, self.total_mb))
+        if required_mb <= self.system_reserved_mb:
+            return False
+        # Buscar bloque sistema al inicio
+        if not self.blocks or self.blocks[0].process_pid != 0:
+            return False
+        sys_block = self.blocks[0]
+        growth = required_mb - self.system_reserved_mb
+        # Verificar espacio libre inmediato
+        if len(self.blocks) > 1 and self.blocks[1].free and (sys_block.end + growth) <= self.blocks[1].end:
+            # Ajustar sistema y bloque libre restante
+            new_sys_end = sys_block.end + growth
+            remainder_end = self.blocks[1].end
+            self.blocks[0] = MemoryBlock(0, new_sys_end, 0)
+            self.blocks[1] = MemoryBlock(new_sys_end, remainder_end, None)
+            self.system_reserved_mb = required_mb
+            return True
+        # Si no hay espacio contiguo suficiente intentar compactar y reintentar
+        self.compact()
+        if self.blocks and self.blocks[0].process_pid == 0 and self.blocks[0].end == self.system_reserved_mb:
+            # Después de compactar, intentar de nuevo
+            if len(self.blocks) > 1 and self.blocks[1].free and (self.blocks[0].end + growth) <= self.blocks[1].end:
+                new_sys_end = self.blocks[0].end + growth
+                remainder_end = self.blocks[1].end
+                self.blocks[0] = MemoryBlock(0, new_sys_end, 0)
+                self.blocks[1] = MemoryBlock(new_sys_end, remainder_end, None)
+                self.system_reserved_mb = required_mb
+                return True
+        return False
 
 class PagedAllocationResult:
     def __init__(self, success: bool, page_faults: int, algorithm: str, pages_allocated: int = 0):

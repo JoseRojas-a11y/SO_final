@@ -66,10 +66,10 @@ class MemoryView(QWidget):
         root.addWidget(self.units_group)
 
         # Tabla comparativa entre unidades
-        self.units_table = QTableWidget(0, 11)
+        self.units_table = QTableWidget(0, 12)
         self.units_table.setMinimumHeight(len(getattr(self.engine, 'memory_units', [])) * 30 + 50)
         self.units_table.setHorizontalHeaderLabels([
-            "Unidad", "Total MB", "Usado MB", "Fragmentación %", "Eficiencia %",
+            "Unidad", "Total MB", "SO Reservado", "Usado MB", "Fragmentación %", "Eficiencia %",
             "Alg Asig.", "Alg Pagin.", "Faults", "Hits", "Fault Rate %", "Utilización %"
         ])
         header_units = self.units_table.horizontalHeader()
@@ -135,6 +135,7 @@ class MemoryView(QWidget):
             self._set_row(self.units_table, r, [
                 f"Unidad {int(s['id'])+1}",
                 int(s['total_mb']),
+                int(s.get('system_reserved_mb', 0)),
                 int(s['used_mb']),
                 f"{s['fragmentation']*100:.2f}",
                 f"{s['efficiency']*100:.2f}",
@@ -151,7 +152,8 @@ class MemoryView(QWidget):
         text = (
             f"<html><body>"
             f"<table border='0' cellspacing='5' cellpadding='3'>"
-            f"<tr><td>Total Memoria:</td><td>{int(s['total_mb'])} MB</td><td>Memoria Usada:</td><td>{int(s['used_mb'])} MB</td></tr>"
+            f"<tr><td>Total Memoria Física:</td><td>{int(s['total_mb'])} MB</td><td>Virtual Total:</td><td>{int(s['virtual_total_mb'])} MB</td></tr>"
+            f"<tr><td>SO Reservado:</td><td>{int(s['system_reserved_mb'])} MB</td><td>Memoria Usada:</td><td>{int(s['used_mb'])} MB</td></tr>"
             f"<tr><td>Page Faults:</td><td>{int(s['total_page_faults'])}</td><td>Page Hits:</td><td>{int(s['total_hits'])}</td></tr>"
             f"<tr><td>Tasa Faults:</td><td>{s['fault_rate']*100:.2f}%</td><td>Utilización Promedio:</td><td>{s['avg_mem_util']*100:.1f}%</td></tr>"
             f"</table>"

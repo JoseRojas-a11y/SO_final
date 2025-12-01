@@ -52,7 +52,8 @@ class SimulationEngine:
         num_memory_units: int = 2,
         memory_unit_capacity_mb: int = 256,
     ) -> None:
-        self.num_memory_units = max(1, int(num_memory_units))
+        # Limitar unidades de memoria: mínimo 1, máximo 8
+        self.num_memory_units = max(1, min(8, int(num_memory_units)))
         self.memory_unit_capacity_mb = max(1, int(memory_unit_capacity_mb))
 
         def strategy_for(name: str):
@@ -71,8 +72,16 @@ class SimulationEngine:
                 page_alg="FIFO",
                 manager=None,
                 paged_manager=None,
+                system_reserved_mb=0,
             )
-            mu.manager = MemoryManager(mu.total_mb, mu.alloc_alg, strategy_for(mu.alloc_alg))
+            # Reservar memoria del sistema SOLO en la primera unidad
+            base_sys_mb = 16  # Asunción: núcleo + estructuras base
+            if i == 0:
+                mu.system_reserved_mb = min(base_sys_mb, mu.total_mb)
+                mu.manager = MemoryManager(mu.total_mb, mu.alloc_alg, strategy_for(mu.alloc_alg), system_reserved_mb=mu.system_reserved_mb)
+            else:
+                mu.system_reserved_mb = 0
+                mu.manager = MemoryManager(mu.total_mb, mu.alloc_alg, strategy_for(mu.alloc_alg), system_reserved_mb=0)
             mu.paged_manager = PagedMemoryManager(mu.total_mb, page_size_mb=4, replacement_alg=mu.page_alg)
             self.memory_units.append(mu)
 
@@ -94,7 +103,9 @@ class SimulationEngine:
 
         self.scheduling_alg_name = scheduling_alg
         self.quantum = quantum
-        self.cpus: List[CPU] = [CPU(id=i, thread_capacity=threads_per_cpu) for i in range(max(1, int(num_cpus)))]
+        # Limitar CPUs: mínimo 1, máximo 8
+        cpu_count = max(1, min(8, int(num_cpus)))
+        self.cpus: List[CPU] = [CPU(id=i, thread_capacity=threads_per_cpu) for i in range(cpu_count)]
         self.schedulers: List[Scheduler] = [self._create_scheduler(self.scheduling_alg_name) for _ in self.cpus]
         self.scheduler_names: List[str] = [self.scheduling_alg_name for _ in self.cpus]
 
@@ -258,6 +269,8 @@ class SimulationEngine:
     def update_processes(self) -> None:
         self._cleanup_terminated_processes()
         self._move_new_processes_to_ready()
+        # Actualizar memoria reservada del sistema según procesos activos
+        self._update_system_reserved_memory()
         self._update_waiting_processes()
         self._run_cpus()
         self.arch.process_pending_interrupts(self, self.tick_count)
@@ -392,6 +405,9 @@ class SimulationEngine:
             process.state = "WAITING"
             process.interrupt_type = "SYSCALL"
             process.io_remaining_ticks = duration
+            # Liberar CPU mientras el proceso espera
+            if process.cpu_id is not None and 0 <= process.cpu_id < len(self.cpus):
+                self.cpus[process.cpu_id].release()
             self.log_interrupt(f"Process {process.name} ejecuta SYSCALL por {duration} ticks.")
             if self.architecture == "Modular":
                 self.log_layer_flow("Proceso", "Núcleo Base", f"syscall:{pid}")
@@ -405,6 +421,9 @@ class SimulationEngine:
             process.state = "WAITING"
             process.interrupt_type = "IO"
             process.io_remaining_ticks = duration
+            # Liberar CPU mientras el proceso espera
+            if process.cpu_id is not None and 0 <= process.cpu_id < len(self.cpus):
+                self.cpus[process.cpu_id].release()
             self.log_interrupt(f"Process {process.name} entra a I/O por {duration} ticks.")
             if self.architecture == "Modular":
                 self.log_layer_flow("Proceso", "Manejador de Interrupciones", f"io_req:{pid}")
@@ -418,6 +437,9 @@ class SimulationEngine:
             process.state = "WAITING"
             process.interrupt_type = "PAGE_FAULT"
             process.io_remaining_ticks = duration
+            # Liberar CPU mientras el proceso espera
+            if process.cpu_id is not None and 0 <= process.cpu_id < len(self.cpus):
+                self.cpus[process.cpu_id].release()
             self.log_interrupt(f"Process {process.name} sufre PAGE FAULT ({duration} ticks).")
             return True
         return False
@@ -496,6 +518,7 @@ class SimulationEngine:
                     "id": unit.id,
                     "total_mb": unit.manager.total_mb,
                     "used_mb": used,
+                    "system_reserved_mb": unit.manager.system_reserved_mb,
                     "fragmentation": unit.manager.fragmentation_ratio(),
                     "efficiency": unit.manager.efficiency(),
                     "alloc_alg": unit.manager.algorithm,
@@ -511,6 +534,7 @@ class SimulationEngine:
     def storage_overview(self) -> Dict[str, float]:
         total_mb = sum(u.manager.total_mb for u in self.memory_units)
         used_mb = sum(sum(b.size for b in u.manager.blocks if not b.free) for u in self.memory_units)
+        system_reserved = sum(u.manager.system_reserved_mb for u in self.memory_units)
         total_faults = sum(u.paged_manager.page_faults for u in self.memory_units)
         total_hits = sum(u.paged_manager.page_hits for u in self.memory_units)
         total_accesses = total_faults + total_hits
@@ -518,9 +542,12 @@ class SimulationEngine:
         avg_mem_util = 0.0
         if self.memory_units:
             avg_mem_util = sum(u.paged_manager.memory_utilization() for u in self.memory_units) / len(self.memory_units)
+        virtual_extension_factor = 1.5  # Asunción de expansión de memoria virtual
         return {
             "total_mb": total_mb,
             "used_mb": used_mb,
+            "system_reserved_mb": system_reserved,
+            "virtual_total_mb": int(total_mb * virtual_extension_factor),
             "total_page_faults": total_faults,
             "total_hits": total_hits,
             "fault_rate": fault_rate,
@@ -577,10 +604,12 @@ class SimulationEngine:
         for i in range(self.num_memory_units):
             alloc_alg = self.memory_units[i].manager.algorithm if i < len(self.memory_units) else "first"
             page_alg = self.memory_units[i].paged_manager.replacement_alg if i < len(self.memory_units) else "FIFO"
+            base_sys_mb = 16
             mgr = MemoryManager(
                 self.memory_unit_capacity_mb,
                 alloc_alg,
                 FirstFitStrategy() if alloc_alg == "first" else BestFitStrategy() if alloc_alg == "best" else WorstFitStrategy(),
+                system_reserved_mb=min(base_sys_mb, self.memory_unit_capacity_mb)
             )
             pm = PagedMemoryManager(self.memory_unit_capacity_mb, page_size_mb=4, replacement_alg=page_alg)
             mu = SimpleNamespace(
@@ -590,6 +619,7 @@ class SimulationEngine:
                 page_alg=page_alg,
                 manager=mgr,
                 paged_manager=pm,
+                system_reserved_mb=min(base_sys_mb, self.memory_unit_capacity_mb),
             )
             new_units.append(mu)
         self.memory_units = new_units
@@ -601,11 +631,44 @@ class SimulationEngine:
 
     def log_layer_flow(self, source: str, target: str, action: str) -> None:
         self._layer_flow.append(f"[Tick {self.tick_count}] {source} → {target}")
-        if len(self._layer_flow) > 50:
-            self._layer_flow.pop(0)
+        # Mantener solo las últimas 10 entradas
+        if len(self._layer_flow) > 10:
+            self._layer_flow = self._layer_flow[-10:]
 
     def get_module_status(self) -> Dict:
         return {"ipc_enabled": False, "modules_loaded": len(self.dynamic_modules)}
+
+    # Traducción de dirección virtual a frame físico (memoria paginada)
+    def translate_virtual_address(self, pid: int, offset_mb: int) -> Optional[str]:
+        if pid not in self.processes:
+            return None
+        if offset_mb < 0:
+            return None
+        page_size = 4  # Asunción consistente con paged_manager
+        page_number = offset_mb // page_size
+        # Buscar en cualquier unidad (simplificación: primera que contenga el proceso en tabla)
+        for unit in self.memory_units:
+            table = unit.paged_manager.get_page_table(pid)
+            if not table:
+                continue
+            if page_number >= len(table):
+                return "SWAPPED"  # Dirección virtual fuera de páginas asignadas
+            entry = table[page_number]
+            if entry.valid and entry.frame_number is not None:
+                return f"FRAME_{entry.frame_number}"
+            return "SWAPPED"
+        return "NO_TABLE"
+
+    def _update_system_reserved_memory(self):
+        active_count = len([p for p in self.processes.values() if p.state != "TERMINATED"])
+        base_sys_mb = 16
+        per_proc_mb = 2
+        required = base_sys_mb + active_count * per_proc_mb
+        # Expandir SOLO en la primera unidad
+        if self.memory_units:
+            unit = self.memory_units[0]
+            if unit.manager.expand_system_reserved(required):
+                unit.system_reserved_mb = unit.manager.system_reserved_mb
 
     def load_module(self, module_id: str, module_name: str, removable: bool = True) -> bool:
         if module_id in self.dynamic_modules:

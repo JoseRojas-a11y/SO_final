@@ -36,7 +36,10 @@ class MemoryBar(QWidget):
                 bw = int(b.size * scale)
                 if bw < 1: bw = 1
                 
-                if b.free:
+                if b.process_pid == 0:
+                    # Bloque reservado del sistema operativo (SO)
+                    brush = QBrush(QColor(30, 70, 160))
+                elif b.free:
                     brush = QBrush(QColor(200, 200, 200))
                     brush.setStyle(Qt.BrushStyle.DiagCrossPattern)
                 else:
@@ -48,7 +51,8 @@ class MemoryBar(QWidget):
                 
                 if not b.free and bw > 20:
                     painter.setPen(Qt.GlobalColor.white)
-                    painter.drawText(x, 0, bw, bar_h, Qt.AlignmentFlag.AlignCenter, f"P{b.process_pid}")
+                    label = "SO" if b.process_pid == 0 else f"P{b.process_pid}"
+                    painter.drawText(x, 0, bw, bar_h, Qt.AlignmentFlag.AlignCenter, label)
 
             # Draw Addressing / Paging Grid
             painter.setPen(QPen(QColor(0, 0, 0, 100), 1, Qt.PenStyle.DashLine))
@@ -77,7 +81,10 @@ class MemoryBar(QWidget):
                     break
             
             if found:
-                status = "Libre" if found.free else f"Proceso PID {found.process_pid}"
+                if found.process_pid == 0:
+                    status = "Reservado Sistema"
+                else:
+                    status = "Libre" if found.free else f"Proceso PID {found.process_pid}"
                 self.setToolTip(f"Dirección: {int(mb_pos)} MB\nBloque: {found.start}-{found.end} MB\nEstado: {status}")
             else:
                 self.setToolTip(f"Dirección: {int(mb_pos)} MB")
