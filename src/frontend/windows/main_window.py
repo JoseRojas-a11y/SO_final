@@ -116,16 +116,6 @@ class MainWindow(QMainWindow):
             arch_control_layout.addWidget(QLabel("Módulos Cargados:"))
             arch_control_layout.addWidget(self.modules_list)
             
-            btn_layout = QHBoxLayout()
-            self.btn_load_module = QPushButton("➕ Cargar Módulo")
-            self.btn_load_module.clicked.connect(self.load_module_dialog)
-            btn_layout.addWidget(self.btn_load_module)
-            
-            self.btn_unload_module = QPushButton("➖ Descargar")
-            self.btn_unload_module.clicked.connect(self.unload_selected_module)
-            btn_layout.addWidget(self.btn_unload_module)
-            arch_control_layout.addLayout(btn_layout)
-            
             right_layout.addWidget(arch_control_group)
             
             layer_flow_group = QGroupBox("📡 Flujo entre Capas (Modular)")
@@ -190,6 +180,9 @@ class MainWindow(QMainWindow):
         # Timer
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.on_tick)
+        
+        # Initial update
+        self.update_architecture_view()
 
     def group_box(self, title: str, widget: QWidget) -> QGroupBox:
         box = QGroupBox(title)
@@ -303,6 +296,10 @@ class MainWindow(QMainWindow):
             
     def _update_arch_status(self):
         """Actualiza el texto de estado de la arquitectura."""
+        if not self.engine.is_running and self.engine.ticks == 0:
+            self.arch_status_label.setText("Esperando inicio de simulación...")
+            return
+
         status = self.engine.get_module_status()
         arch = self.engine.architecture
         
@@ -323,63 +320,6 @@ class MainWindow(QMainWindow):
         
         self.arch_status_label.setText(text)
         
-    def load_module_dialog(self):
-        """Diálogo para cargar un módulo dinámicamente."""
-        if self.engine.architecture != "Modular":
-            return
-            
-        d = QDialog(self)
-        d.setWindowTitle("Cargar Módulo")
-        l = QFormLayout(d)
-        
-        from PyQt6.QtWidgets import QLineEdit
-        name_input = QLineEdit()
-        name_input.setPlaceholderText("Nombre del módulo")
-        l.addRow("Nombre:", name_input)
-        
-        btn = QPushButton("Cargar")
-        btn.clicked.connect(d.accept)
-        l.addRow(btn)
-        
-        if d.exec() == QDialog.DialogCode.Accepted:
-            module_name = name_input.text().strip()
-            if module_name:
-                module_id = module_name.lower().replace(" ", "_")
-                success = self.engine.load_module(module_id, module_name, removable=True)
-                if success:
-                    self.console.print_msg(f"Módulo '{module_name}' cargado exitosamente.")
-                    self.update_architecture_view()
-                    self.refresh_layer_flow()
-                else:
-                    self.console.print_msg(f"Error: No se pudo cargar el módulo '{module_name}'.")
-                    
-    def unload_selected_module(self):
-        """Descarga el módulo seleccionado."""
-        if self.engine.architecture != "Modular":
-            return
-            
-        current_item = self.modules_list.currentItem()
-        if not current_item:
-            self.console.print_msg("Por favor, seleccione un módulo para descargar.")
-            return
-        
-        # Extraer el ID del módulo del texto
-        text = current_item.text()
-        # Buscar el módulo por nombre
-        for module_id, module in self.engine.dynamic_modules.items():
-            if module.get('name', module_id) in text:
-                success = self.engine.unload_module(module_id)
-                if success:
-                    self.console.print_msg(f"Módulo '{module.get('name', module_id)}' descargado exitosamente.")
-                    self.update_architecture_view()
-                    self.refresh_layer_flow()
-                else:
-                    self.console.print_msg(f"Error: No se pudo descargar el módulo.")
-                return
-        
-        self.console.print_msg("Error: Módulo no encontrado.")
-
-
     def create_manual_process(self):
         # Simple dialog to get size and duration
         d = QDialog(self)
