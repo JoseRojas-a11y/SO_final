@@ -13,7 +13,7 @@ class ConfigDialog(QDialog):
         layout.addRow("Arquitectura SO:", self.arch_combo)
         
         self.sched_combo = QComboBox()
-        self.sched_combo.addItems(["FCFS", "SJF", "SRTF", "RR", "Priority", "PriorityRR"])
+        self.sched_combo.addItems(["FCFS", "SJF", "SRTF", "RR"])
         self.sched_combo.currentTextChanged.connect(self.on_sched_change)
         layout.addRow("Algoritmo Planificación:", self.sched_combo)
         
@@ -30,7 +30,7 @@ class ConfigDialog(QDialog):
         layout.addRow(btn_box)
         
     def on_sched_change(self, text):
-        self.quantum_spin.setEnabled(text == "RR" or text == "PriorityRR")
+        self.quantum_spin.setEnabled(text == "RR")
 
     def get_config(self):
         return {
