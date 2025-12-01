@@ -2,7 +2,7 @@ from PyQt6.QtWidgets import QWidget
 from PyQt6.QtGui import QColor, QPainter, QBrush, QPen, QMouseEvent
 from PyQt6.QtCore import Qt
 from typing import List
-from ...simulation.models import MemoryBlock
+from ...os_core.models import MemoryBlock
 
 class MemoryBar(QWidget):
     def __init__(self, blocks: List[MemoryBlock], total: int, parent=None):

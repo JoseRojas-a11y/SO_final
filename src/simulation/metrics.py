@@ -1,6 +1,6 @@
 from typing import Dict
-from .memory_manager import AllocationResult
-from .models import Process
+from ..os_core.memory.manager import AllocationResult
+from ..os_core.models import Process
 
 class SimulationMetrics:
     def __init__(self):
@@ -15,6 +15,8 @@ class SimulationMetrics:
         self.total_turnaround_time = 0
         self.total_waiting_time = 0
         self.cpu_busy_ticks = 0
+        # Effective ticks considering multithreading acceleration
+        self.effective_cpu_ticks = 0
 
     def update(self, result: AllocationResult):
         alg = result.algorithm

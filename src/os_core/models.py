@@ -11,6 +11,7 @@ class Process:
     size_mb: int
     cpu_usage: float = 0.0  # porcentaje 0-100
     memory_usage_mb: int = 0  # asignado real
+    memory_unit_id: Optional[int] = None  # unidad de memoria asignada
     duration_ticks: int = 0
     remaining_ticks: int = 0
     pid: int = field(default_factory=lambda: next(_process_id_counter))
@@ -27,6 +28,10 @@ class Process:
     io_remaining_ticks: int = 0  # Ticks restantes de I/O cuando está en WAITING
     io_total_ticks: int = 0  # Ticks totales de I/O asignados
     interrupt_type: Optional[str] = None  # Tipo de interrupción actual (IO, SEMAPHORE_BLOCK, etc.)
+    io_probability: float = 0.15  # Probabilidad de solicitar I/O en un tick
+    syscall_probability: float = 0.05  # Probabilidad de generar una interrupción de software
+    hardware_interrupt_probability: float = 0.02  # Sensibilidad a interrupciones de hardware
+    last_interrupt_tick: Optional[int] = None
     
     def tick(self):
         if self.state == "TERMINATED":
@@ -41,6 +46,44 @@ class Process:
         # Simular fluctuación CPU
         self.cpu_usage = max(0.0, min(100.0, self.cpu_usage + random.uniform(-10, 10)))
         # Logic moved to Engine/Scheduler to control execution flow
+
+
+@dataclass
+class CPU:
+    """Representa una CPU lógica con soporte de hilos internos."""
+    id: int
+    thread_capacity: int = 2  # Número máximo de hilos paralelos
+    threads_in_use: int = 0
+    process: Optional[Process] = None
+
+    def assign(self, process: Process):
+        self.process = process
+        self.threads_in_use = self.thread_capacity if process is not None else 0
+        if process is not None:
+            process.cpu_id = self.id
+            process.state = "RUNNING"
+            process.quantum_used = 0
+
+    def release(self):
+        if self.process:
+            self.process.cpu_id = None
+        self.process = None
+        self.threads_in_use = 0
+
+    def tick(self):
+        """Avanza la ejecución del proceso usando los hilos disponibles."""
+        if not self.process:
+            return
+        p = self.process
+        if p.state != "RUNNING":
+            return
+        # Consumir tantos ticks como hilos activos (aceleración lineal)
+        p.remaining_ticks -= max(1, self.threads_in_use)
+        if p.remaining_ticks <= 0:
+            p.remaining_ticks = 0
+            p.state = "TERMINATED"
+        # Ajuste de uso de CPU simulado
+        p.cpu_usage = max(0.0, min(100.0, p.cpu_usage + random.uniform(-5, 5)))
 
 
 @dataclass

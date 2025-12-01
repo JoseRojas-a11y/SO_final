@@ -12,10 +12,13 @@ def launch_gui():
     if dialog.exec() == QDialog.DialogCode.Accepted:
         config = dialog.get_config()
         engine = SimulationEngine(
-            total_memory_mb=256, 
-            architecture=config["architecture"],
+            architecture="Modular",
             scheduling_alg=config["scheduling_alg"],
-            quantum=config["quantum"]
+            quantum=config["quantum"],
+            num_cpus=config["cpu_count"],
+            threads_per_cpu=config["threads_per_cpu"],
+            num_memory_units=config.get("memory_units", 2),
+            memory_unit_capacity_mb=config.get("memory_unit_capacity_mb", 256),
         )
         w = MainWindow(engine)
         w.show()
