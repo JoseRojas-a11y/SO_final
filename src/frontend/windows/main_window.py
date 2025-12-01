@@ -1,7 +1,7 @@
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
     QLabel, QFrame, QGroupBox, QHeaderView, QDialog, QPushButton, QSpinBox, QFormLayout,
-    QListWidget, QGridLayout, QCheckBox, QScrollArea
+    QListWidget, QGridLayout, QCheckBox, QScrollArea, QLineEdit
 )
 from PyQt6.QtCore import Qt, QTimer
 from ...simulation.engine import SimulationEngine
@@ -177,6 +177,54 @@ class MainWindow(QMainWindow):
         
         right_layout.addWidget(nav_group)
         
+        # Panel de Estado de Arquitectura (siempre visible)
+        arch_status_group = QGroupBox("📊 Estado de Arquitectura")
+        arch_status_layout = QVBoxLayout(arch_status_group)
+        self.arch_status_label = QLabel()
+        self.arch_status_label.setWordWrap(True)
+        self.arch_status_label.setStyleSheet("font-size: 10px;")
+        arch_status_layout.addWidget(self.arch_status_label)
+        right_layout.addWidget(arch_status_group)
+        
+        # Panel de Control de Módulos (visible según arquitectura)
+        if engine.architecture == "Modular":
+            arch_control_group = QGroupBox("🔧 Control de Módulos Dinámicos")
+            arch_control_layout = QVBoxLayout(arch_control_group)
+            
+            self.modules_list = QListWidget()
+            self.modules_list.setMaximumHeight(120)
+            arch_control_layout.addWidget(QLabel("Módulos Cargados:"))
+            arch_control_layout.addWidget(self.modules_list)
+            
+            btn_layout = QHBoxLayout()
+            self.btn_load_module = QPushButton("➕ Cargar Módulo")
+            self.btn_load_module.clicked.connect(self.load_module_dialog)
+            btn_layout.addWidget(self.btn_load_module)
+            
+            self.btn_unload_module = QPushButton("➖ Descargar")
+            self.btn_unload_module.clicked.connect(self.unload_selected_module)
+            btn_layout.addWidget(self.btn_unload_module)
+            arch_control_layout.addLayout(btn_layout)
+            
+            right_layout.addWidget(arch_control_group)
+            
+            layer_flow_group = QGroupBox("📡 Flujo entre Capas (Modular)")
+            layer_flow_layout = QVBoxLayout(layer_flow_group)
+            self.layer_flow_list = QListWidget()
+            self.layer_flow_list.setMaximumHeight(150)
+            layer_flow_layout.addWidget(QLabel("Últimas interacciones:"))
+            layer_flow_layout.addWidget(self.layer_flow_list)
+            right_layout.addWidget(layer_flow_group)
+        elif engine.architecture == "Microkernel":
+            # Panel de Módulos Externos para Microkernel
+            ext_modules_group = QGroupBox("🔌 Módulos Externos")
+            ext_modules_layout = QVBoxLayout(ext_modules_group)
+            self.ext_modules_list = QListWidget()
+            self.ext_modules_list.setMaximumHeight(120)
+            ext_modules_layout.addWidget(QLabel("Servicios Externos:"))
+            ext_modules_layout.addWidget(self.ext_modules_list)
+            right_layout.addWidget(ext_modules_group)
+        
         # Simulation Controls
         controls_group = QGroupBox("Control Simulación")
         controls_layout = QGridLayout(controls_group)
@@ -301,6 +349,127 @@ class MainWindow(QMainWindow):
         self.refresh_cpu_status()
         self.refresh_interrupt_log()
         self.refresh_process_queue()
+        self.update_architecture_view()
+        self.refresh_layer_flow()
+
+    def refresh_layer_flow(self):
+        """Actualiza el panel de flujo entre capas (solo Modular)."""
+        if not hasattr(self, 'layer_flow_list'):
+            return
+        events = self.engine.layer_flow_events()
+        if self.layer_flow_list.count() != len(events):
+            self.layer_flow_list.clear()
+            for ev in events:
+                self.layer_flow_list.addItem(ev)
+            self.layer_flow_list.scrollToBottom()
+        
+    def update_architecture_view(self):
+        """Actualiza la información de la arquitectura (sin visualización gráfica)."""
+        # Actualizar lista de módulos si es arquitectura Modular
+        if hasattr(self, 'modules_list') and self.engine.architecture == "Modular":
+            self.modules_list.clear()
+            for module_id, module in self.engine.dynamic_modules.items():
+                removable = "⚡" if module.get("removable", False) else "🔒"
+                status_icon = "✓" if module.get("status") == "loaded" else "✗"
+                self.modules_list.addItem(f"{status_icon} {removable} {module.get('name', module_id)}")
+        
+        # Actualizar lista de módulos externos si es arquitectura Microkernel
+        if hasattr(self, 'ext_modules_list') and self.engine.architecture == "Microkernel":
+            self.ext_modules_list.clear()
+            for module_id, module in self.engine.external_modules.items():
+                status_icon = "🟢" if module.get("status") == "active" else "🔴"
+                self.ext_modules_list.addItem(f"{status_icon} {module.get('name', module_id)}")
+        
+        # Actualizar estado de arquitectura
+        if hasattr(self, 'arch_status_label'):
+            self._update_arch_status()
+            
+    def _update_arch_status(self):
+        """Actualiza el texto de estado de la arquitectura."""
+        status = self.engine.get_module_status()
+        arch = self.engine.architecture
+        
+        if arch == "Monolithic":
+            text = "<b>📊 Estado Monolítico</b><br>"
+            text += f"• Núcleo único: <b>ACTIVO</b><br>"
+            text += f"• Gestión centralizada: <b>ACTIVA</b><br>"
+            text += f"• Memoria: Gestionada desde núcleo<br>"
+            text += f"• Procesos: Gestionados desde núcleo<br>"
+            text += f"• Módulos separados: <b>NO</b>"
+        elif arch == "Microkernel":
+            text = "<b>📊 Estado Microkernel</b><br>"
+            text += f"• Núcleo mínimo: <b>ACTIVO</b> (Procesos + IPC)<br>"
+            text += f"• Módulos externos: <b>{len(self.engine.external_modules)}</b><br>"
+            text += f"• IPC: <b>{'✅ Habilitado' if status.get('ipc_enabled') else '❌ Deshabilitado'}</b><br>"
+            text += f"• Memoria: Gestionada por módulo externo<br>"
+            text += f"• Coordinación: Microkernel coordina módulos"
+        elif arch == "Modular":
+            text = "<b>📊 Estado Modular</b><br>"
+            text += f"• Núcleo base: <b>ACTIVO</b><br>"
+            text += f"• Módulos totales: <b>{len(self.engine.dynamic_modules)}</b><br>"
+            core_count = sum(1 for m in self.engine.dynamic_modules.values() if not m.get('removable', True))
+            optional_count = len(self.engine.dynamic_modules) - core_count
+            text += f"• Módulos core: <b>{core_count}</b> (no removibles)<br>"
+            text += f"• Módulos opcionales: <b>{optional_count}</b> (removibles)<br>"
+            text += f"• Gestión dinámica: <b>ACTIVA</b>"
+        
+        self.arch_status_label.setText(text)
+        
+    def load_module_dialog(self):
+        """Diálogo para cargar un módulo dinámicamente."""
+        if self.engine.architecture != "Modular":
+            return
+            
+        d = QDialog(self)
+        d.setWindowTitle("Cargar Módulo")
+        l = QFormLayout(d)
+        
+        from PyQt6.QtWidgets import QLineEdit
+        name_input = QLineEdit()
+        name_input.setPlaceholderText("Nombre del módulo")
+        l.addRow("Nombre:", name_input)
+        
+        btn = QPushButton("Cargar")
+        btn.clicked.connect(d.accept)
+        l.addRow(btn)
+        
+        if d.exec() == QDialog.DialogCode.Accepted:
+            module_name = name_input.text().strip()
+            if module_name:
+                module_id = module_name.lower().replace(" ", "_")
+                success = self.engine.load_module(module_id, module_name, removable=True)
+                if success:
+                    self.console.print_msg(f"Módulo '{module_name}' cargado exitosamente.")
+                    self.update_architecture_view()
+                    self.refresh_layer_flow()
+                else:
+                    self.console.print_msg(f"Error: No se pudo cargar el módulo '{module_name}'.")
+                    
+    def unload_selected_module(self):
+        """Descarga el módulo seleccionado."""
+        if self.engine.architecture != "Modular":
+            return
+            
+        current_item = self.modules_list.currentItem()
+        if not current_item:
+            self.console.print_msg("Por favor, seleccione un módulo para descargar.")
+            return
+        
+        # Extraer el ID del módulo del texto
+        text = current_item.text()
+        # Buscar el módulo por nombre
+        for module_id, module in self.engine.dynamic_modules.items():
+            if module.get('name', module_id) in text:
+                success = self.engine.unload_module(module_id)
+                if success:
+                    self.console.print_msg(f"Módulo '{module.get('name', module_id)}' descargado exitosamente.")
+                    self.update_architecture_view()
+                    self.refresh_layer_flow()
+                else:
+                    self.console.print_msg(f"Error: No se pudo descargar el módulo.")
+                return
+        
+        self.console.print_msg("Error: Módulo no encontrado.")
 
     def refresh_cpu_status(self):
         for i, lbl in enumerate(self.cpu_labels):

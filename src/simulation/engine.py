@@ -77,6 +77,7 @@ class SimulationEngine:
         # Multiprocessor: 4 CPUs
         self.cpus: List[Optional[Process]] = [None] * 4
         self.interrupt_log: List[str] = []
+        self.layer_flow_log: List[str] = []
         
         # Initialize Scheduler
         if scheduling_alg == "FCFS":
@@ -93,12 +94,270 @@ class SimulationEngine:
             self.scheduler = PriorityRoundRobin(quantum=quantum)
         else:
             self.scheduler = FCFS() # Default
+        
+        # Atributos para arquitecturas Microkernel y Modular
+        self.external_modules: Dict[str, Dict] = {}  # Módulos externos (Microkernel)
+        self.dynamic_modules: Dict[str, Dict] = {}  # Módulos dinámicos (Modular)
+        self.ipc_messages: List[Dict] = []  # Mensajes IPC (Microkernel)
+        
+        # Inicializar arquitectura seleccionada
+        # Este método de control invoca el método adecuado según la arquitectura seleccionada
+        self.init_architecture(architecture)
+        
+    def init_architecture(self, architecture: str):
+        """
+        Método de control que invoca el método adecuado según la arquitectura seleccionada.
+        Captura la selección y ejecuta el comportamiento del sistema operativo adecuado.
+        """
+        if architecture == "Monolithic":
+            self.init_monolithic()  # Equivalente a initMonolithicOS()
+        elif architecture == "Microkernel":
+            self.init_microkernel()  # Equivalente a initMicrokernelOS()
+        elif architecture == "Modular":
+            self.init_modular()  # Equivalente a initModularOS()
+        else:
+            self.log_interrupt(f"Arquitectura desconocida: {architecture}. Usando Monolithic por defecto.")
+            self.init_monolithic()
 
     def log_interrupt(self, message: str):
         timestamp = f"[Tick {self.tick_count}]"
         self.interrupt_log.append(f"{timestamp} {message}")
         if len(self.interrupt_log) > 50:
             self.interrupt_log.pop(0)
+
+    def log_layer_flow(self, source: str, target: str, action: str):
+        """Registra el flujo de peticiones entre capas (solo arquitectura Modular)."""
+        if self.architecture != "Modular":
+            return
+        timestamp = f"[Tick {self.tick_count}]"
+        entry = f"{timestamp} {source} → {target}: {action}"
+        self.layer_flow_log.append(entry)
+        if len(self.layer_flow_log) > 50:
+            self.layer_flow_log.pop(0)
+
+    def init_monolithic(self):
+        """
+        Inicializa la arquitectura Monolítica.
+        El núcleo gestiona todos los recursos (memoria, procesos, tareas) de manera centralizada
+        sin separación de módulos.
+        Equivalente a initMonolithicOS() según especificaciones.
+        """
+        self.log_interrupt("Arquitectura Monolítica inicializada: Núcleo único gestionando todos los recursos.")
+        self.log_interrupt("Gestión centralizada de procesos, memoria y tareas activada.")
+        
+        # Configurar arquitectura monolítica
+        self.kernel_mode = "monolithic"
+        self.centralized_memory_management = True
+        self.centralized_process_management = True
+        
+        # Inicializar componentes según especificaciones
+        self.setup_monolithic_memory()
+        self.setup_monolithic_processes()
+        self.setup_monolithic_devices()
+        
+    def setup_monolithic_memory(self):
+        """Configura la gestión de memoria en arquitectura Monolítica."""
+        # En Monolithic, la memoria se gestiona directamente desde el núcleo
+        # Los gestores de memoria ya están inicializados en __init__
+        self.log_interrupt("Gestión de memoria Monolítica: Todo centralizado en el núcleo.")
+        
+    def setup_monolithic_processes(self):
+        """Configura la gestión de procesos en arquitectura Monolítica."""
+        # En Monolithic, los procesos se gestionan directamente desde el núcleo
+        # El scheduler ya está inicializado en __init__
+        self.log_interrupt("Gestión de procesos Monolítica: Todo centralizado en el núcleo.")
+        
+    def setup_monolithic_devices(self):
+        """Configura la gestión de dispositivos en arquitectura Monolítica."""
+        # En Monolithic, los dispositivos se gestionan directamente desde el núcleo
+        self.log_interrupt("Gestión de dispositivos Monolítica: Todo centralizado en el núcleo.")
+        
+    def init_microkernel(self):
+        """
+        Inicializa la arquitectura Microkernel.
+        El núcleo solo gestiona funciones básicas (procesos e IPC).
+        Los servicios como gestión de memoria son manejados por módulos externos.
+        Equivalente a initMicrokernelOS() según especificaciones.
+        """
+        self.log_interrupt("Arquitectura Microkernel inicializada: Núcleo básico activado.")
+        
+        # Configurar arquitectura microkernel
+        self.kernel_mode = "microkernel"
+        self.centralized_memory_management = False
+        self.centralized_process_management = True
+        
+        # Inicializar componentes según especificaciones
+        self.setup_microkernel()
+        self.setup_microkernel_modules()
+        
+    def setup_microkernel(self):
+        """Configura el microkernel mínimo con funciones básicas."""
+        # El núcleo solo gestiona procesos e IPC
+        self.log_interrupt("Microkernel configurado: Gestión de procesos y IPC activada.")
+        
+        # Inicializar sistema IPC (Inter-Process Communication)
+        self.ipc_messages = []
+        self.ipc_enabled = True
+        self.log_interrupt("Sistema IPC (Inter-Process Communication) activado.")
+        
+    def setup_microkernel_modules(self):
+        """Configura los módulos externos del microkernel."""
+        # Inicializar módulos externos para servicios
+        self.external_modules = {
+            "memory_service": {
+                "name": "Servicio de Memoria",
+                "status": "active",
+                "initialized": True,
+                "managers": self.managers,  # Los gestores de memoria están en módulo externo
+                "paged_managers": self.paged_managers
+            },
+            "file_service": {
+                "name": "Servicio de Archivos",
+                "status": "active",
+                "initialized": True
+            },
+            "device_service": {
+                "name": "Servicio de Dispositivos",
+                "status": "active",
+                "initialized": True
+            },
+            "network_service": {
+                "name": "Servicio de Red",
+                "status": "active",
+                "initialized": True
+            }
+        }
+        
+        self.log_interrupt("Módulos externos inicializados: Memoria, Archivos, Dispositivos, Red.")
+        self.log_interrupt("Los módulos externos gestionan sus propios recursos de forma independiente.")
+        
+    def init_modular(self):
+        """
+        Inicializa la arquitectura Modular.
+        El núcleo gestiona recursos básicos y los módulos pueden ser agregados o eliminados dinámicamente.
+        Equivalente a initModularOS() según especificaciones.
+        """
+        self.log_interrupt("Arquitectura Modular inicializada: Núcleo básico activado.")
+        
+        # Configurar arquitectura modular
+        self.kernel_mode = "modular"
+        self.centralized_memory_management = True
+        self.centralized_process_management = True
+        
+        # Inicializar componentes según especificaciones
+        self.setup_modular_kernel()
+        self.add_initial_modules()
+        
+    def setup_modular_kernel(self):
+        """Configura el núcleo base de la arquitectura Modular."""
+        self.log_interrupt("Núcleo Modular configurado: Gestión de recursos básicos activada.")
+        
+        # Inicializar módulos base que siempre están presentes (no removibles)
+        self.dynamic_modules = {
+            "core_process_manager": {
+                "name": "Gestor de Procesos Core",
+                "status": "loaded",
+                "removable": False,
+                "initialized": True,
+                "type": "core"
+            },
+            "core_memory_manager": {
+                "name": "Gestor de Memoria Core",
+                "status": "loaded",
+                "removable": False,
+                "initialized": True,
+                "type": "core",
+                "managers": self.managers,
+                "paged_managers": self.paged_managers
+            }
+        }
+        
+        self.log_interrupt("Módulos core cargados: Gestor de Procesos, Gestor de Memoria.")
+        
+    def add_initial_modules(self):
+        """Agrega los módulos iniciales opcionales en arquitectura Modular."""
+        # Cargar módulos opcionales iniciales
+        self.load_module("scheduler_module", "Módulo de Planificación", removable=True)
+        self.load_module("interrupt_handler", "Manejador de Interrupciones", removable=True)
+        self.load_module("device_driver", "Controlador de Dispositivos", removable=True)
+        
+        self.log_interrupt("Módulos opcionales iniciales cargados: Planificación, Interrupciones, Dispositivos.")
+        
+    def load_module(self, module_id: str, module_name: str, removable: bool = True):
+        """
+        Carga un módulo dinámicamente en arquitectura Modular.
+        
+        Args:
+            module_id: Identificador único del módulo
+            module_name: Nombre descriptivo del módulo
+            removable: Si el módulo puede ser eliminado dinámicamente
+        """
+        if module_id in self.dynamic_modules:
+            self.log_interrupt(f"Módulo '{module_name}' ya está cargado.")
+            return False
+        
+        self.dynamic_modules[module_id] = {
+            "name": module_name,
+            "status": "loaded",
+            "removable": removable,
+            "initialized": True,
+            "load_tick": self.tick_count
+        }
+        
+        self.log_interrupt(f"Módulo '{module_name}' cargado dinámicamente.")
+        self.log_layer_flow("Núcleo Base", module_name, "Integración de módulo dinámico")
+        return True
+        
+    def unload_module(self, module_id: str):
+        """
+        Descarga un módulo dinámicamente en arquitectura Modular.
+        
+        Args:
+            module_id: Identificador único del módulo a descargar
+        """
+        if module_id not in self.dynamic_modules:
+            self.log_interrupt(f"Módulo '{module_id}' no encontrado.")
+            return False
+        
+        module = self.dynamic_modules[module_id]
+        
+        if not module.get("removable", False):
+            self.log_interrupt(f"Módulo '{module['name']}' no puede ser eliminado (módulo core).")
+            return False
+        
+        module_name = module["name"]
+        del self.dynamic_modules[module_id]
+        self.log_interrupt(f"Módulo '{module_name}' descargado dinámicamente.")
+        self.log_layer_flow(module_name, "Núcleo Base", "Desconexión de módulo dinámico")
+        return True
+        
+    def get_module_status(self) -> Dict:
+        """
+        Retorna el estado de los módulos según la arquitectura.
+        """
+        if self.architecture == "Monolithic":
+            return {
+                "architecture": "Monolithic",
+                "kernel_mode": "monolithic",
+                "modules": "Todo integrado en núcleo único"
+            }
+        elif self.architecture == "Microkernel":
+            return {
+                "architecture": "Microkernel",
+                "kernel_mode": "microkernel",
+                "external_modules": {k: {"name": v["name"], "status": v["status"]} 
+                                    for k, v in self.external_modules.items()},
+                "ipc_enabled": self.ipc_enabled
+            }
+        elif self.architecture == "Modular":
+            return {
+                "architecture": "Modular",
+                "kernel_mode": "modular",
+                "dynamic_modules": {k: {"name": v["name"], "status": v["status"], 
+                                     "removable": v.get("removable", False)} 
+                                   for k, v in self.dynamic_modules.items()}
+            }
+        return {}
 
     def _assign_priority(self, process: Process) -> int:
         """Asigna prioridad automáticamente basada en características del proceso."""
@@ -136,31 +395,26 @@ class SimulationEngine:
         self.processes[p.pid] = p
         self.metrics.total_processes += 1
         
-        allocated = False
-        for alg, manager in self.managers.items():
-            result = manager.allocate(p)
-            self.metrics.update(result)
-            if alg == 'first' and result.success:
-                allocated = True
-        
-        # Asignar también en gestores paginados
-        for alg, paged_manager in self.paged_managers.items():
-            paged_result = paged_manager.allocate(p, self.tick_count)
-            # No fallamos si paginación falla, solo registramos
+        # Gestión de memoria según arquitectura
+        allocated = self._allocate_memory(p)
         
         if allocated:
             # El proceso permanece en NEW hasta el siguiente tick, cuando se moverá a READY
             # No llamamos a scheduler.add_process aquí, se hará en update_processes
-            self.log_interrupt(f"Process {p.name} created manually (Priority: {p.priority}) - Estado: NEW.")
+            arch_prefix = f"[{self.architecture.upper()}]"
+            if self.architecture == "Monolithic":
+                self.log_interrupt(f"{arch_prefix} Process {p.name} creado - Gestionado centralizadamente por el núcleo único (Priority: {p.priority})")
+            elif self.architecture == "Microkernel":
+                self.log_interrupt(f"{arch_prefix} Process {p.name} creado - Gestionado por el microkernel (Priority: {p.priority})")
+            else:  # Modular
+                self.log_interrupt(f"{arch_prefix} Process {p.name} creado - Gestionado por módulo 'Gestor de Procesos Core' (Priority: {p.priority})")
+                self.log_layer_flow("Núcleo Base", "Gestor de Procesos Core", f"Registrar proceso {p.name}")
         else:
             p.state = "TERMINATED"
             p.finish_tick = self.tick_count  # Establecer finish_tick para que pueda ser eliminado después
             self.log_interrupt(f"Process {p.name} creation failed (Memory Full).")
             # Release memory from any manager that might have allocated (e.g. best/worst) even if first failed
-            for manager in self.managers.values():
-                manager.release(p)
-            for paged_manager in self.paged_managers.values():
-                paged_manager.release(p)
+            self._release_memory(p)
             
         return p
 
@@ -177,42 +431,154 @@ class SimulationEngine:
         self.processes[p.pid] = p
         self.metrics.total_processes += 1
         
-        allocated = False
-        for alg, manager in self.managers.items():
-            result = manager.allocate(p)
-            self.metrics.update(result)
-            if alg == 'first' and result.success:
-                allocated = True
-        
-        # Asignar también en gestores paginados
-        for alg, paged_manager in self.paged_managers.items():
-            paged_result = paged_manager.allocate(p, self.tick_count)
-            # No fallamos si paginación falla, solo registramos
+        # Gestión de memoria según arquitectura
+        allocated = self._allocate_memory(p)
         
         if allocated:
             # El proceso permanece en NEW hasta el siguiente tick, cuando se moverá a READY
             # No llamamos a scheduler.add_process aquí, se hará en update_processes
-            self.log_interrupt(f"Process {p.name} created (Auto, Priority: {p.priority}) - Estado: NEW.")
+            arch_prefix = f"[{self.architecture.upper()}]"
+            if self.architecture == "Monolithic":
+                self.log_interrupt(f"{arch_prefix} Process {p.name} creado automáticamente - Gestionado centralizadamente por el núcleo único (Priority: {p.priority})")
+            elif self.architecture == "Microkernel":
+                self.log_interrupt(f"{arch_prefix} Process {p.name} creado automáticamente - Gestionado por el microkernel (Priority: {p.priority})")
+            else:  # Modular
+                self.log_interrupt(f"{arch_prefix} Process {p.name} creado automáticamente - Gestionado por módulo 'Gestor de Procesos Core' (Priority: {p.priority})")
+                self.log_layer_flow("Núcleo Base", "Gestor de Procesos Core", f"Registrar proceso {p.name}")
         else:
             p.state = "TERMINATED" # Rejected due to memory
             p.finish_tick = self.tick_count  # Establecer finish_tick para que pueda ser eliminado después
             # Release memory from any manager that might have allocated (e.g. best/worst) even if first failed
-            for manager in self.managers.values():
-                manager.release(p)
-            for paged_manager in self.paged_managers.values():
-                paged_manager.release(p)
+            self._release_memory(p)
             
         return p
 
     def release_process(self, p: Process):
-        for manager in self.managers.values():
-            manager.release(p)
-        for paged_manager in self.paged_managers.values():
-            paged_manager.release(p)
+        # Liberar memoria según arquitectura
+        self._release_memory(p)
         p.state = "TERMINATED"
         p.finish_tick = self.tick_count
         self.metrics.record_process_completion(p, self.tick_count)
         self.log_interrupt(f"Process {p.name} terminated.")
+        
+    def _allocate_memory(self, process: Process) -> bool:
+        """
+        Asigna memoria a un proceso según la arquitectura del sistema.
+        En Monolithic y Modular: asignación directa desde el núcleo.
+        En Microkernel: asignación a través del módulo externo de memoria.
+        """
+        allocated = False
+        
+        if self.architecture == "Microkernel":
+            # En microkernel, la memoria se gestiona a través del módulo externo
+            if "memory_service" in self.external_modules:
+                memory_module = self.external_modules["memory_service"]
+                managers = memory_module.get("managers", self.managers)
+                paged_managers = memory_module.get("paged_managers", self.paged_managers)
+                
+                self.log_interrupt(f"[MICROKERNEL] Asignando memoria a {process.name} a través del módulo externo 'Servicio de Memoria'")
+                
+                for alg, manager in managers.items():
+                    result = manager.allocate(process)
+                    self.metrics.update(result)
+                    if alg == 'first' and result.success:
+                        allocated = True
+                        self.log_interrupt(f"[MICROKERNEL] Memoria asignada: {process.size_mb}MB para {process.name} (gestionado por módulo externo)")
+                
+                # Asignar también en gestores paginados
+                for alg, paged_manager in paged_managers.items():
+                    paged_result = paged_manager.allocate(process, self.tick_count)
+        elif self.architecture == "Monolithic":
+            # Monolithic: asignación directa desde el núcleo único
+            self.log_interrupt(f"[MONOLITHIC] Asignando memoria a {process.name} directamente desde el núcleo único")
+            
+            for alg, manager in self.managers.items():
+                result = manager.allocate(process)
+                self.metrics.update(result)
+                if alg == 'first' and result.success:
+                    allocated = True
+                    self.log_interrupt(f"[MONOLITHIC] Memoria asignada: {process.size_mb}MB para {process.name} (gestionado centralizadamente)")
+            
+            # Asignar también en gestores paginados
+            for alg, paged_manager in self.paged_managers.items():
+                paged_result = paged_manager.allocate(process, self.tick_count)
+        else:  # Modular
+            # Modular: asignación directa desde el núcleo (pero con estructura modular)
+            self.log_interrupt(f"[MODULAR] Asignando memoria a {process.name} desde el núcleo base (módulo 'Gestor de Memoria Core')")
+            
+            for alg, manager in self.managers.items():
+                result = manager.allocate(process)
+                self.metrics.update(result)
+                if alg == 'first' and result.success:
+                    allocated = True
+                    self.log_interrupt(f"[MODULAR] Memoria asignada: {process.size_mb}MB para {process.name} (gestionado por módulo core)")
+            
+            # Asignar también en gestores paginados
+            for alg, paged_manager in self.paged_managers.items():
+                paged_result = paged_manager.allocate(process, self.tick_count)
+            
+            if allocated:
+                self.log_layer_flow("Núcleo Base", "Gestor de Memoria Core", f"Asignar {process.size_mb}MB a {process.name}")
+        
+        return allocated
+        
+    def _release_memory(self, process: Process):
+        """
+        Libera memoria de un proceso según la arquitectura del sistema.
+        """
+        if self.architecture == "Microkernel":
+            # En microkernel, la memoria se libera a través del módulo externo
+            if "memory_service" in self.external_modules:
+                memory_module = self.external_modules["memory_service"]
+                managers = memory_module.get("managers", self.managers)
+                paged_managers = memory_module.get("paged_managers", self.paged_managers)
+                
+                self.log_interrupt(f"[MICROKERNEL] Liberando memoria de {process.name} a través del módulo externo 'Servicio de Memoria'")
+                
+                for manager in managers.values():
+                    manager.release(process)
+                for paged_manager in paged_managers.values():
+                    paged_manager.release(process)
+        elif self.architecture == "Monolithic":
+            # Monolithic: liberación directa desde el núcleo único
+            self.log_interrupt(f"[MONOLITHIC] Liberando memoria de {process.name} directamente desde el núcleo único")
+            
+            for manager in self.managers.values():
+                manager.release(process)
+            for paged_manager in self.paged_managers.values():
+                paged_manager.release(process)
+        else:
+            # Modular: liberación directa desde el núcleo (pero con módulos)
+            self.log_interrupt(f"[MODULAR] Liberando memoria de {process.name} desde el módulo 'Gestor de Memoria Core'")
+            
+            for manager in self.managers.values():
+                manager.release(process)
+            for paged_manager in self.paged_managers.values():
+                paged_manager.release(process)
+            
+            self.log_layer_flow("Gestor de Memoria Core", "Núcleo Base", f"Liberar memoria de {process.name}")
+                
+    def send_ipc_message(self, from_pid: int, to_pid: int, message: str):
+        """
+        Envía un mensaje IPC entre procesos (solo en arquitectura Microkernel).
+        """
+        if self.architecture != "Microkernel" or not self.ipc_enabled:
+            return False
+        
+        ipc_msg = {
+            "from_pid": from_pid,
+            "to_pid": to_pid,
+            "message": message,
+            "tick": self.tick_count
+        }
+        self.ipc_messages.append(ipc_msg)
+        
+        # Mantener solo los últimos 100 mensajes
+        if len(self.ipc_messages) > 100:
+            self.ipc_messages.pop(0)
+        
+        self.log_interrupt(f"[MICROKERNEL] IPC: El microkernel coordina comunicación entre Proceso {from_pid} -> {to_pid}: {message}")
+        return True
 
     def update_processes(self):
         # Multiprocessor Scheduling Logic
@@ -372,26 +738,95 @@ class SimulationEngine:
 
     def tick(self):
         self.tick_count += 1
+        
+        # Gestión de recursos según arquitectura
+        if self.architecture == "Microkernel":
+            # En microkernel, los servicios externos se actualizan independientemente
+            self._update_external_services()
+        elif self.architecture == "Modular":
+            # En modular, los módulos dinámicos pueden actualizarse
+            self._update_dynamic_modules()
+        
         # probability create new process
         if self.auto_create_processes and random.random() < 0.3:  # 30% chance
             self.create_process()
         
-        # Actualizar gestores de memoria (autocompactación)
-        for manager in self.managers.values():
-            manager.tick()
-        
-        # Actualizar gestores paginados
-        for paged_manager in self.paged_managers.values():
-            paged_manager.tick(self.tick_count)
+        # Actualizar gestores de memoria según arquitectura
+        self._update_memory_managers()
         
         # Simular accesos a páginas de procesos en ejecución
         for cpu in self.cpus:
             if cpu and random.random() < 0.1:  # 10% chance de acceso a página
                 page_num = random.randint(0, max(0, (cpu.size_mb // 4) - 1))
-                for paged_manager in self.paged_managers.values():
-                    paged_manager.access_page(cpu, page_num, self.tick_count)
+                self._access_pages(cpu, page_num)
         
         self.update_processes()
+        
+    def _update_memory_managers(self):
+        """Actualiza los gestores de memoria según la arquitectura."""
+        if self.architecture == "Microkernel":
+            # En microkernel, la memoria se gestiona a través del módulo externo
+            if "memory_service" in self.external_modules:
+                memory_module = self.external_modules["memory_service"]
+                managers = memory_module.get("managers", self.managers)
+                paged_managers = memory_module.get("paged_managers", self.paged_managers)
+                
+                for manager in managers.values():
+                    manager.tick()
+                for paged_manager in paged_managers.values():
+                    paged_manager.tick(self.tick_count)
+        else:
+            # Monolithic y Modular: actualización directa
+            for manager in self.managers.values():
+                manager.tick()
+            for paged_manager in self.paged_managers.values():
+                paged_manager.tick(self.tick_count)
+                
+    def _access_pages(self, process: Process, page_num: int):
+        """Accede a páginas según la arquitectura."""
+        if self.architecture == "Microkernel":
+            if "memory_service" in self.external_modules:
+                memory_module = self.external_modules["memory_service"]
+                paged_managers = memory_module.get("paged_managers", self.paged_managers)
+                for paged_manager in paged_managers.values():
+                    paged_manager.access_page(process, page_num, self.tick_count)
+        else:
+            for paged_manager in self.paged_managers.values():
+                paged_manager.access_page(process, page_num, self.tick_count)
+                
+    def _update_external_services(self):
+        """Actualiza los servicios externos en arquitectura Microkernel."""
+        for module_id, module in self.external_modules.items():
+            if module.get("status") == "active":
+                # Simular actividad del servicio
+                if module_id == "memory_service":
+                    # El servicio de memoria ya se actualiza en _update_memory_managers
+                    pass
+                elif module_id == "file_service":
+                    # Simular operaciones de archivos
+                    if random.random() < 0.05:  # 5% chance
+                        self.log_interrupt(f"Servicio de Archivos: Operación completada.")
+                elif module_id == "device_service":
+                    # Simular operaciones de dispositivos
+                    if random.random() < 0.05:  # 5% chance
+                        self.log_interrupt(f"Servicio de Dispositivos: I/O completado.")
+                        
+    def _update_dynamic_modules(self):
+        """Actualiza los módulos dinámicos en arquitectura Modular."""
+        for module_id, module in self.dynamic_modules.items():
+            if module.get("status") == "loaded":
+                # Simular actividad del módulo
+                if "scheduler" in module_id.lower() or "planificación" in module.get("name", "").lower():
+                    # El módulo de planificación ya está activo
+                    pass
+                elif "interrupt" in module_id.lower() or "interrupcion" in module.get("name", "").lower():
+                    # Módulo de interrupciones activo
+                    pass
+                elif "device" in module_id.lower() or "dispositivo" in module.get("name", "").lower():
+                    # Módulo de dispositivos activo
+                    if random.random() < 0.03:  # 3% chance
+                        self.log_interrupt(f"Módulo {module.get('name', module_id)}: Operación completada.")
+                        self.log_layer_flow(module.get("name", module_id), "Núcleo Base", "Reporta operación completada")
 
 
     def active_processes(self) -> List[Process]:
@@ -403,6 +838,10 @@ class SimulationEngine:
         for alg, manager in self.managers.items():
             data[alg] = manager.snapshot_blocks()
         return data
+
+    def layer_flow_events(self) -> List[str]:
+        """Retorna el log actual de flujo de peticiones entre capas."""
+        return list(self.layer_flow_log)
 
     def algorithm_stats(self):
         stats = {}
@@ -432,6 +871,7 @@ class SimulationEngine:
         self.tick_count = 0
         self.cpus = [None] * 4
         self.interrupt_log.clear()
+        self.layer_flow_log.clear()
         
         # Reset memory managers
         for manager in self.managers.values():
@@ -461,5 +901,8 @@ class SimulationEngine:
             self.scheduler = PriorityRoundRobin(quantum=self.quantum)
         else:
             self.scheduler = FCFS()
+        
+        # Reinicializar arquitectura usando el método de control
+        self.init_architecture(self.architecture)
             
         self.log_interrupt("Simulation reset.")

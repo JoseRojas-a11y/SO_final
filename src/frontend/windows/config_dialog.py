@@ -8,10 +8,6 @@ class ConfigDialog(QDialog):
         
         layout = QFormLayout(self)
         
-        self.arch_combo = QComboBox()
-        self.arch_combo.addItems(["Monolithic", "Microkernel", "Modular"])
-        layout.addRow("Arquitectura SO:", self.arch_combo)
-        
         self.sched_combo = QComboBox()
         self.sched_combo.addItems(["FCFS", "SJF", "SRTF", "RR", "Priority", "PriorityRR"])
         self.sched_combo.currentTextChanged.connect(self.on_sched_change)
@@ -34,7 +30,7 @@ class ConfigDialog(QDialog):
 
     def get_config(self):
         return {
-            "architecture": self.arch_combo.currentText(),
+            "architecture": "Modular",
             "scheduling_alg": self.sched_combo.currentText(),
             "quantum": self.quantum_spin.value()
         }
