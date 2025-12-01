@@ -24,6 +24,9 @@ class Process:
     waiting_ticks: int = 0
     cpu_id: Optional[int] = None  # ID of the CPU running this process
     quantum_used: int = 0 # Ticks used in current quantum (for RR)
+    io_remaining_ticks: int = 0  # Ticks restantes de I/O cuando está en WAITING
+    io_total_ticks: int = 0  # Ticks totales de I/O asignados
+    interrupt_type: Optional[str] = None  # Tipo de interrupción actual (IO, SEMAPHORE_BLOCK, etc.)
     
     def tick(self):
         if self.state == "TERMINATED":

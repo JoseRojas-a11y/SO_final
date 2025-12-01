@@ -1,7 +1,7 @@
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
     QLabel, QFrame, QGroupBox, QHeaderView, QDialog, QPushButton, QSpinBox, QFormLayout,
-    QStackedWidget, QListWidget, QGridLayout
+    QListWidget, QGridLayout, QCheckBox, QScrollArea
 )
 from PyQt6.QtCore import Qt, QTimer
 from ...simulation.engine import SimulationEngine
@@ -15,16 +15,34 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(f"Simulación SO - {engine.architecture} - {engine.scheduling_alg_name}")
         self.resize(1200, 800)
 
+        # Estado de selección
+        self.processes_selected = False
+        self.memory_selected = False
+        self.first_selected = None  # 'processes' o 'memory'
+
         central = QWidget()
         self.setCentralWidget(central)
         main_layout = QHBoxLayout(central) # Main layout is horizontal: Menu | Content
 
-        # Content Area (Stacked Widget)
-        self.stack = QStackedWidget()
+        # Content Area - Widget contenedor principal
+        self.content_widget = QWidget()
+        self.content_layout = QVBoxLayout(self.content_widget)
+        self.content_layout.setContentsMargins(5, 5, 5, 5)
+        self.content_layout.setSpacing(5)
         
-        # Page 1: Process Management
-        self.page_processes = QWidget()
-        proc_layout = QVBoxLayout(self.page_processes)
+        # Page vacía inicial
+        self.page_empty = QWidget()
+        empty_layout = QVBoxLayout(self.page_empty)
+        empty_layout.addStretch()
+        empty_label = QLabel("Seleccione una opción para comenzar")
+        empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        empty_label.setStyleSheet("font-size: 18px; color: #666;")
+        empty_layout.addWidget(empty_label)
+        empty_layout.addStretch()
+        
+        # Page 1: Process Management (contenido completo)
+        self.page_processes_content = QWidget()
+        proc_layout = QVBoxLayout(self.page_processes_content)
         
         # Header
         header_layout = QHBoxLayout()
@@ -52,18 +70,28 @@ class MainWindow(QMainWindow):
             header.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         proc_layout.addWidget(self.group_box("Procesos Activos", self.process_table))
         
+        # Queue and Interrupt Log (divided in two)
+        queue_interrupt_layout = QHBoxLayout()
+        
+        # Cola de procesos
+        self.process_queue_list = QListWidget()
+        queue_interrupt_layout.addWidget(self.group_box("Cola de procesos", self.process_queue_list), 1)
+        
         # Interrupt Log
         self.interrupt_list = QListWidget()
-        self.interrupt_list.setMaximumHeight(150)
-        proc_layout.addWidget(self.group_box("Registro de Interrupciones", self.interrupt_list))
+        queue_interrupt_layout.addWidget(self.group_box("Registro de Interrupciones", self.interrupt_list), 1)
+        
+        queue_interrupt_widget = QWidget()
+        queue_interrupt_widget.setLayout(queue_interrupt_layout)
+        proc_layout.addWidget(queue_interrupt_widget, 1)  # Factor de estiramiento para ocupar espacio disponible
         
         # Global Stats in Process Page
         self.global_stats_label = QLabel("Métricas Globales: ...")
         proc_layout.addWidget(self.group_box("Métricas del Sistema", self.global_stats_label))
         
-        # Page 2: Memory Management
-        self.page_memory = QWidget()
-        mem_layout_page = QVBoxLayout(self.page_memory)
+        # Page 2: Memory Management (contenido completo)
+        self.page_memory_content = QWidget()
+        mem_layout_page = QVBoxLayout(self.page_memory_content)
         
         self.memory_group = QWidget()
         mem_grid = QGridLayout(self.memory_group)
@@ -106,22 +134,48 @@ class MainWindow(QMainWindow):
             header_paging.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         mem_layout_page.addWidget(self.group_box("Estadísticas de Paginación", self.paging_table))
 
+        # Crear ScrollAreas para procesos y memoria
+        self.scroll_processes = QScrollArea()
+        self.scroll_processes.setWidget(self.page_processes_content)
+        self.scroll_processes.setWidgetResizable(True)
+        self.scroll_processes.setVisible(False)
+        self.scroll_processes.setFrameShape(QFrame.Shape.NoFrame)
+        
+        self.scroll_memory = QScrollArea()
+        self.scroll_memory.setWidget(self.page_memory_content)
+        self.scroll_memory.setWidgetResizable(True)
+        self.scroll_memory.setVisible(False)
+        self.scroll_memory.setFrameShape(QFrame.Shape.NoFrame)
 
-        # Add pages to stack
-        self.stack.addWidget(self.page_processes)
-        self.stack.addWidget(self.page_memory)
+        # Separador visual entre secciones
+        self.divider = QFrame()
+        self.divider.setFrameShape(QFrame.Shape.HLine)
+        self.divider.setFrameShadow(QFrame.Shadow.Sunken)
+        self.divider.setLineWidth(2)
+        self.divider.setStyleSheet("background-color: white; border: 2px solid white;")
+        self.divider.setFixedHeight(3)
+        self.divider.setVisible(False)
+
+        # Mostrar página vacía inicialmente
+        self.content_layout.addWidget(self.page_empty)
 
         # Navigation & Console (Right Side)
         right_widget = QWidget()
         right_layout = QVBoxLayout(right_widget)
         
-        self.nav_list = QListWidget()
-        self.nav_list.addItem("Gestión de Procesos")
-        self.nav_list.addItem("Gestión de Memoria")
-        self.nav_list.currentRowChanged.connect(self.stack.setCurrentIndex)
-        self.nav_list.setCurrentRow(0)
+        # Checkboxes en lugar de ListWidget
+        nav_group = QGroupBox("Opciones")
+        nav_layout = QVBoxLayout(nav_group)
         
-        right_layout.addWidget(self.nav_list)
+        self.checkbox_processes = QCheckBox("Gestión de Procesos")
+        self.checkbox_processes.stateChanged.connect(self.on_navigation_changed)
+        nav_layout.addWidget(self.checkbox_processes)
+        
+        self.checkbox_memory = QCheckBox("Gestión de Memoria")
+        self.checkbox_memory.stateChanged.connect(self.on_navigation_changed)
+        nav_layout.addWidget(self.checkbox_memory)
+        
+        right_layout.addWidget(nav_group)
         
         # Simulation Controls
         controls_group = QGroupBox("Control Simulación")
@@ -156,7 +210,7 @@ class MainWindow(QMainWindow):
         right_widget.setFixedWidth(300)
 
         # Add to main layout
-        main_layout.addWidget(self.stack)
+        main_layout.addWidget(self.content_widget)
         main_layout.addWidget(right_widget)
 
         # Timer
@@ -174,6 +228,69 @@ class MainWindow(QMainWindow):
         w.setLayout(layout)
         return w
 
+    def on_navigation_changed(self):
+        """Maneja los cambios en la selección de opciones de navegación"""
+        processes_checked = self.checkbox_processes.isChecked()
+        memory_checked = self.checkbox_memory.isChecked()
+        
+        # Determinar qué se seleccionó primero (solo si no hay ninguno seleccionado previamente)
+        if processes_checked and not self.processes_selected:
+            if not self.memory_selected:
+                self.first_selected = 'processes'
+        elif memory_checked and not self.memory_selected:
+            if not self.processes_selected:
+                self.first_selected = 'memory'
+        
+        # Si se deseleccionan ambos, resetear first_selected
+        if not processes_checked and not memory_checked:
+            self.first_selected = None
+        
+        # Actualizar estado
+        self.processes_selected = processes_checked
+        self.memory_selected = memory_checked
+        
+        # Limpiar layout de contenido
+        while self.content_layout.count():
+            child = self.content_layout.takeAt(0)
+            if child.widget():
+                child.widget().setParent(None)
+        
+        # Ocultar todos los scrolls, página vacía y separador
+        self.scroll_processes.setVisible(False)
+        self.scroll_memory.setVisible(False)
+        self.page_empty.setVisible(False)
+        self.divider.setVisible(False)
+        
+        # Lógica de visualización
+        if not processes_checked and not memory_checked:
+            # Ninguna seleccionada: mostrar página vacía
+            self.content_layout.addWidget(self.page_empty)
+            self.page_empty.setVisible(True)
+        elif processes_checked and not memory_checked:
+            # Solo procesos
+            self.content_layout.addWidget(self.scroll_processes)
+            self.scroll_processes.setVisible(True)
+        elif memory_checked and not processes_checked:
+            # Solo memoria
+            self.content_layout.addWidget(self.scroll_memory)
+            self.scroll_memory.setVisible(True)
+        else:
+            # Ambos seleccionados: dividir pantalla según orden con separador
+            if self.first_selected == 'processes':
+                # Procesos arriba, memoria abajo
+                self.content_layout.addWidget(self.scroll_processes, 1)
+                self.content_layout.addWidget(self.divider)
+                self.content_layout.addWidget(self.scroll_memory, 1)
+            else:
+                # Memoria arriba, procesos abajo
+                self.content_layout.addWidget(self.scroll_memory, 1)
+                self.content_layout.addWidget(self.divider)
+                self.content_layout.addWidget(self.scroll_processes, 1)
+            
+            self.scroll_processes.setVisible(True)
+            self.scroll_memory.setVisible(True)
+            self.divider.setVisible(True)
+
     def on_tick(self):
         self.engine.tick()
         self.refresh_process_table()
@@ -183,6 +300,7 @@ class MainWindow(QMainWindow):
         self.refresh_global_stats()
         self.refresh_cpu_status()
         self.refresh_interrupt_log()
+        self.refresh_process_queue()
 
     def refresh_cpu_status(self):
         for i, lbl in enumerate(self.cpu_labels):
@@ -202,6 +320,74 @@ class MainWindow(QMainWindow):
             for msg in self.engine.interrupt_log:
                 self.interrupt_list.addItem(msg)
             self.interrupt_list.scrollToBottom()
+
+    def refresh_process_queue(self):
+        """Actualiza la visualización de las colas de procesos (new, ready, running, waiting, terminated)"""
+        self.process_queue_list.clear()
+        
+        scheduler = self.engine.scheduler
+        
+        # New Queue (procesos en estado NEW)
+        new_processes = [p for p in self.engine.processes.values() if p.state == "NEW"]
+        self.process_queue_list.addItem("=== NUEVO (NEW) ===")
+        if new_processes:
+            for p in new_processes:
+                self.process_queue_list.addItem(f"  {p.name} (PID {p.pid}) - Tamaño: {p.size_mb} MB")
+        else:
+            self.process_queue_list.addItem("  (vacía)")
+        
+        # Ready Queue
+        if hasattr(scheduler, 'rr_queue'):
+            # RoundRobin usa rr_queue
+            ready_processes = list(scheduler.rr_queue)
+        elif hasattr(scheduler, 'priority_queues'):
+            # PriorityRoundRobin usa priority_queues
+            ready_processes = []
+            for queue in scheduler.priority_queues.values():
+                ready_processes.extend(list(queue))
+        else:
+            # Otros schedulers usan ready_queue
+            ready_processes = list(scheduler.ready_queue)
+        
+        self.process_queue_list.addItem("")
+        self.process_queue_list.addItem("=== READY QUEUE ===")
+        if ready_processes:
+            for p in ready_processes:
+                self.process_queue_list.addItem(f"  {p.name} (PID {p.pid}) - Restante: {p.remaining_ticks}")
+        else:
+            self.process_queue_list.addItem("  (vacía)")
+        
+        # Running Queue (procesos en CPUs)
+        self.process_queue_list.addItem("")
+        self.process_queue_list.addItem("=== RUNNING QUEUE ===")
+        running_processes = [p for p in self.engine.cpus if p is not None]
+        if running_processes:
+            for i, p in enumerate(self.engine.cpus):
+                if p is not None:
+                    self.process_queue_list.addItem(f"  {p.name} (PID {p.pid}) - CPU {i} - Restante: {p.remaining_ticks}")
+        else:
+            self.process_queue_list.addItem("  (vacía)")
+        
+        # Waiting Queue (procesos en estado WAITING)
+        self.process_queue_list.addItem("")
+        self.process_queue_list.addItem("=== WAITING QUEUE ===")
+        waiting_processes = [p for p in self.engine.active_processes() if p.state == "WAITING"]
+        if waiting_processes:
+            for p in waiting_processes:
+                self.process_queue_list.addItem(f"  {p.name} (PID {p.pid}) - Restante: {p.remaining_ticks}")
+        else:
+            self.process_queue_list.addItem("  (vacía)")
+        
+        # Terminated Queue (procesos en estado TERMINATED)
+        self.process_queue_list.addItem("")
+        self.process_queue_list.addItem("=== TERMINADO (TERMINATED) ===")
+        terminated_processes = [p for p in self.engine.processes.values() if p.state == "TERMINATED"]
+        if terminated_processes:
+            for p in terminated_processes:
+                finish_info = f" - Finalizado en tick {p.finish_tick}" if p.finish_tick else ""
+                self.process_queue_list.addItem(f"  {p.name} (PID {p.pid}){finish_info}")
+        else:
+            self.process_queue_list.addItem("  (vacía)")
 
     def refresh_process_table(self):
         processes = self.engine.active_processes()
@@ -340,6 +526,7 @@ class MainWindow(QMainWindow):
         self.refresh_global_stats()
         self.refresh_cpu_status()
         self.refresh_interrupt_log()
+        self.refresh_process_queue()
         self.console.print_msg("Simulación reiniciada.")
 
     def set_speed(self, ms: int):

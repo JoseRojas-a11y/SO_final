@@ -1,11 +1,53 @@
 import random
 import time
+import hashlib
 from typing import Dict, List, Optional
 from .models import Process
 from .memory.manager import MemoryManager, AllocationResult, MemoryBlock, PagedMemoryManager, PagedAllocationResult
 from .memory.strategies import FirstFitStrategy, BestFitStrategy, WorstFitStrategy
 from .metrics import SimulationMetrics
 from .scheduler import Scheduler, FCFS, SJF, SRTF, RoundRobin, PriorityScheduler, PriorityRoundRobin
+
+INTERRUPCIONES_WAITING = [
+    "IO",
+    "SEMAPHORE_BLOCK",
+    "JOIN_WAIT",
+    "COND_WAIT",
+    "PAGE_FAULT",
+]
+
+def probabilidad_interrupcion(pid: int, tick: int) -> float:
+    """Calcula la probabilidad de interrupción basada en hash del PID y tick."""
+    key = f"{pid}-{tick}"
+    h = hashlib.sha256(key.encode()).hexdigest()
+    x = int(h[:8], 16)   # tomamos 32 bits del hash
+    return x / 0xFFFFFFFF
+
+def tiempo_io(pid: int, min_io: int = 3, max_io: int = 15) -> int:
+    """Calcula el tiempo de I/O basado en hash del PID."""
+    h = hashlib.sha256(str(pid).encode()).hexdigest()
+    x = int(h[:8], 16)                      # 32 bits del hash
+    r = x % (max_io - min_io + 1)
+    return min_io + r
+
+def tipo_interrupcion(pid: int, tick: int, seed: int = 0) -> str:
+    """
+    Devuelve determinísticamente un tipo de interrupción
+    que enviará al proceso a la cola Waiting.
+    """
+    # Mezcla PID, tick y semilla
+    clave = f"{pid}-{tick}-{seed}"
+    
+    # Hash SHA-256 (determinista)
+    h = hashlib.sha256(clave.encode()).hexdigest()
+    
+    # Usamos 32 bits del hash para pseudoaleatoriedad
+    x = int(h[:8], 16)
+    
+    # Seleccionamos un tipo de interrupción en la lista
+    idx = x % len(INTERRUPCIONES_WAITING)
+    
+    return INTERRUPCIONES_WAITING[idx]
 
 class SimulationEngine:
     def __init__(self, total_memory_mb: int = 256, architecture: str = "Monolithic", scheduling_alg: str = "FCFS", quantum: int = 4):
@@ -24,6 +66,8 @@ class SimulationEngine:
         self.metrics = SimulationMetrics()
         self.tick_count = 0
         self.max_process_duration = 50  # ticks
+        self.terminated_cleanup_delay = 10  # ticks que un proceso terminado permanece antes de ser eliminado
+        self.new_state_delay = 2  # ticks que un proceso permanece en NEW antes de pasar a READY (para visibilidad)
         
         self.architecture = architecture
         self.scheduling_alg_name = scheduling_alg
@@ -105,10 +149,12 @@ class SimulationEngine:
             # No fallamos si paginación falla, solo registramos
         
         if allocated:
-            self.scheduler.add_process(p)
-            self.log_interrupt(f"Process {p.name} created manually (Priority: {p.priority}).")
+            # El proceso permanece en NEW hasta el siguiente tick, cuando se moverá a READY
+            # No llamamos a scheduler.add_process aquí, se hará en update_processes
+            self.log_interrupt(f"Process {p.name} created manually (Priority: {p.priority}) - Estado: NEW.")
         else:
             p.state = "TERMINATED"
+            p.finish_tick = self.tick_count  # Establecer finish_tick para que pueda ser eliminado después
             self.log_interrupt(f"Process {p.name} creation failed (Memory Full).")
             # Release memory from any manager that might have allocated (e.g. best/worst) even if first failed
             for manager in self.managers.values():
@@ -144,10 +190,12 @@ class SimulationEngine:
             # No fallamos si paginación falla, solo registramos
         
         if allocated:
-            self.scheduler.add_process(p)
-            self.log_interrupt(f"Process {p.name} created (Auto, Priority: {p.priority}).")
+            # El proceso permanece en NEW hasta el siguiente tick, cuando se moverá a READY
+            # No llamamos a scheduler.add_process aquí, se hará en update_processes
+            self.log_interrupt(f"Process {p.name} created (Auto, Priority: {p.priority}) - Estado: NEW.")
         else:
             p.state = "TERMINATED" # Rejected due to memory
+            p.finish_tick = self.tick_count  # Establecer finish_tick para que pueda ser eliminado después
             # Release memory from any manager that might have allocated (e.g. best/worst) even if first failed
             for manager in self.managers.values():
                 manager.release(p)
@@ -170,6 +218,47 @@ class SimulationEngine:
         # Multiprocessor Scheduling Logic
         # We have 4 CPUs. We need to fill them from the scheduler.
         
+        # 0. Cleanup terminated processes (eliminar de la cola TERMINATED después de un tiempo)
+        terminated_to_remove = []
+        for pid, p in list(self.processes.items()):
+            if p.state == "TERMINATED":
+                # Usar finish_tick si está disponible, sino usar arrival_tick como fallback
+                termination_tick = p.finish_tick if p.finish_tick is not None else p.arrival_tick
+                ticks_since_termination = self.tick_count - termination_tick
+                if ticks_since_termination >= self.terminated_cleanup_delay:
+                    terminated_to_remove.append(pid)
+        
+        for pid in terminated_to_remove:
+            p = self.processes[pid]
+            del self.processes[pid]
+            self.log_interrupt(f"Process {p.name} (PID {p.pid}) eliminado de la cola TERMINATED.")
+        
+        # 0.1. Move NEW processes to READY (transición de NEW a READY después de un delay)
+        for p in list(self.processes.values()):
+            if p.state == "NEW":
+                # Calcular cuántos ticks ha estado en NEW
+                ticks_in_new = self.tick_count - p.arrival_tick
+                # Solo mover a READY después del delay para que sea visible
+                if ticks_in_new >= self.new_state_delay:
+                    # Mover proceso de NEW a READY y agregarlo al scheduler
+                    p.state = "READY"
+                    self.scheduler.add_process(p)
+                    self.log_interrupt(f"Process {p.name} (PID {p.pid}) movido de cola NEW a READY.")
+        
+        # 0.2. Update processes in WAITING state (I/O operations)
+        for p in self.active_processes():
+            if p.state == "WAITING":
+                if p.io_remaining_ticks > 0:
+                    p.io_remaining_ticks -= 1
+                if p.io_remaining_ticks <= 0:
+                    # I/O completed, return to READY
+                    interrupt_type = p.interrupt_type or "WAITING"
+                    p.state = "READY"
+                    p.io_remaining_ticks = 0
+                    p.interrupt_type = None  # Clear interrupt type
+                    self.scheduler.add_process(p)
+                    self.log_interrupt(f"Process {p.name} {interrupt_type} completed, returning to READY queue.")
+        
         # 1. Check running processes on CPUs
         for i in range(len(self.cpus)):
             p = self.cpus[i]
@@ -190,6 +279,22 @@ class SimulationEngine:
                 
                 if p.state == "TERMINATED":
                     self.cpus[i] = None
+                    continue
+                
+                # Check for random interruption based on hash
+                prob = probabilidad_interrupcion(p.pid, self.tick_count)
+                if prob > 0.95:  # 5% chance of interruption (top 5% of hash values)
+                    # Interrupt process and send to WAITING
+                    interrupt_type = tipo_interrupcion(p.pid, self.tick_count)
+                    io_time = tiempo_io(p.pid)
+                    p.state = "WAITING"
+                    p.io_remaining_ticks = io_time
+                    p.io_total_ticks = io_time
+                    p.interrupt_type = interrupt_type
+                    p.cpu_id = None
+                    p.quantum_used = 0  # Reset quantum if interrupted
+                    self.cpus[i] = None
+                    self.log_interrupt(f"Process {p.name} interrupted ({interrupt_type}).")
                     continue
                 
                 # Check if it should yield (e.g. RR quantum)
