@@ -195,15 +195,39 @@ class SimulationEngine:
         return 5
 
     def manual_create_process(self, size_mb: int, duration: int, priority: Optional[int] = None) -> Process:
+        # Corrección lógica para asegurar que la suma sea exacta
+        # En lugar de calcular los 3 por porcentaje, calcula 2 y el último es la resta.
+        code_mb = int(size_mb * 0.50)  # Ejemplo 50%
+        data_mb = int(size_mb * 0.30)  # Ejemplo 30%
+        # El resto se asigna a memoria extra para que cuadre perfecto
+        extra_mb = int(size_mb - code_mb - data_mb)
+        
+        # Asegurar que size_mb sea exactamente la suma de los segmentos
+        calculated_size = code_mb + data_mb + extra_mb
+        
+        # Determinar si el proceso tendrá error (0.5% de probabilidad)
+        has_error = random.random() < 0.005
+        
         process = Process(
             name=f"P{len(self.processes) + 1}",
-            size_mb=size_mb,
+            size_mb=calculated_size,  # Usar el tamaño calculado para garantizar consistencia
+            code_size_mb=code_mb,
+            data_size_mb=data_mb,
+            extra_memory_mb=extra_mb,
+            has_error=has_error,
+            exit_code=0,  # Se actualizará si hay error
             cpu_usage=random.uniform(5, 40),
             duration_ticks=duration,
             remaining_ticks=duration,
         )
         process.arrival_tick = self.tick_count
         process.state = "NEW"
+        # Asegurar consistencia: size_mb debe ser igual a la suma de segmentos
+        if not process.validate_segment_consistency():
+            process.size_mb = process.get_total_segment_size()
+        # Asignar dirección física de memoria (simulada)
+        # Dirección base 0x400000 + (PID * 0x10000) para cada proceso único
+        process.memory_start_address = 0x400000 + (process.pid * 0x10000)
         self._configure_process_behavior(process)
         process.priority = max(0, min(9, priority)) if priority is not None else self._assign_priority(process)
         self.processes[process.pid] = process
@@ -214,15 +238,39 @@ class SimulationEngine:
     def create_process(self) -> Process:
         size = random.randint(4, 64)
         duration = random.randint(20, self.max_process_duration)
+        # Corrección lógica para asegurar que la suma sea exacta
+        # En lugar de calcular los 3 por porcentaje, calcula 2 y el último es la resta.
+        code_mb = int(size/2)  # Ejemplo 50%
+        data_mb = int(size * (3/10))  # Ejemplo 30%
+        # El resto se asigna a memoria extra para que cuadre perfecto
+        extra_mb = int(size - (code_mb + data_mb))
+        
+        # Asegurar que size_mb sea exactamente la suma de los segmentos
+        calculated_size = int(code_mb + data_mb + extra_mb)
+        
+        # Determinar si el proceso tendrá error (0.5% de probabilidad)
+        has_error = random.random() < 0.005
+        
         process = Process(
             name=f"P{len(self.processes) + 1}",
-            size_mb=size,
+            size_mb=calculated_size,  # Usar el tamaño calculado para garantizar consistencia
+            code_size_mb=code_mb,
+            data_size_mb=data_mb,
+            extra_memory_mb=extra_mb,
+            has_error=has_error,
+            exit_code=0,  # Se actualizará si hay error
             cpu_usage=random.uniform(5, 40),
             duration_ticks=duration,
             remaining_ticks=duration,
         )
         process.arrival_tick = self.tick_count
         process.state = "NEW"
+        # Asegurar consistencia: size_mb debe ser igual a la suma de segmentos
+        if not process.validate_segment_consistency():
+            process.size_mb = process.get_total_segment_size()
+        # Asignar dirección física de memoria (simulada)
+        # Dirección base 0x400000 + (PID * 0x10000) para cada proceso único
+        process.memory_start_address = 0x400000 + (process.pid * 0x10000)
         self._configure_process_behavior(process)
         process.priority = self._assign_priority(process)
         self.processes[process.pid] = process
@@ -263,14 +311,21 @@ class SimulationEngine:
                 unit.paged_manager.release(process)
         process.state = "TERMINATED"
         process.finish_tick = self.tick_count
+        # Asegurar que procesos sin error tengan exit_code = 0
+        if not process.has_error and process.exit_code == 0:
+            process.exit_code = 0
         self.metrics.record_process_completion(process, self.tick_count)
-        self.log_interrupt(f"Process {process.name} terminated.")
+        exit_status = f" (exit_code: {process.exit_code})" if process.exit_code != 0 else ""
+        self.log_interrupt(f"Process {process.name} terminated{exit_status}.")
 
     def update_processes(self) -> None:
         self._cleanup_terminated_processes()
         self._move_new_processes_to_ready()
         # Actualizar memoria reservada del sistema según procesos activos
         self._update_system_reserved_memory()
+        # Actualizar todos los procesos activos (para actualizar PC y registros)
+        for process in self.active_processes():
+            process.tick()
         self._update_waiting_processes()
         self._run_cpus()
         self.arch.process_pending_interrupts(self, self.tick_count)
@@ -343,6 +398,23 @@ class SimulationEngine:
             if process.state == "TERMINATED":
                 cpu.release()
                 continue
+
+            # Verificar si el proceso con error debe terminar prematuramente
+            if process.has_error and process.state == "RUNNING":
+                # El proceso debe terminar en un momento aleatorio durante su ejecución
+                # Usar una probabilidad determinística basada en PID y tick para consistencia
+                error_prob = _deterministic_probability(process.pid, self.tick_count, "error")
+                # El proceso debe haber ejecutado al menos un 10% de su duración antes de poder fallar
+                progress = 1.0 - (process.remaining_ticks / max(1, process.duration_ticks))
+                # Probabilidad de fallo: 10% por tick después del 10% de progreso
+                if progress >= 0.1 and error_prob < 0.10:
+                    process.exit_code = -1
+                    process.state = "TERMINATED"
+                    process.remaining_ticks = 0
+                    self.log_interrupt(f"Process {process.name} (PID {process.pid}) terminó con ERROR (exit_code: -1).")
+                    self.release_process(process)
+                    cpu.release()
+                    continue
 
             if self._evaluate_process_interrupts(process):
                 continue

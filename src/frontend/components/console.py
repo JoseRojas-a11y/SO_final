@@ -64,6 +64,8 @@ class ConsoleWidget(QWidget):
                 self.cmd_speed(args)
             elif cmd == "auto":
                 self.cmd_auto(args)
+            elif cmd == "demo":
+                self.cmd_demo(args)
             elif cmd == "clear":
                 self.output.clear()
             else:
@@ -76,8 +78,9 @@ class ConsoleWidget(QWidget):
 Comandos Disponibles:
 ---------------------
 create <size> <duration> [prio] : Crea un proceso manual (MB, ticks, 0-10)
+demo                            : Carga escenario de prueba con 20 procesos
 pause                           : Pausa la simulación
-star                            : Activa la simulación
+start/resume                    : Activa/Reanuda la simulación
 speed <ms>                      : Cambia velocidad (ms por tick, min 10)
 auto <on|off>                   : Activa/Desactiva creación automática
 clear                           : Limpia la consola
@@ -128,3 +131,37 @@ help                            : Muestra esta ayuda
             self.print_msg("Generación automática DESACTIVADA.")
         else:
             self.print_msg("Uso: auto <on|off>")
+
+    def cmd_demo(self, args):
+        """Carga un escenario de prueba con 20 procesos para validación."""
+        import random
+        
+        self.print_msg("=== Cargando escenario de prueba (20 procesos) ===")
+        
+        # Desactivar creación automática durante la carga
+        auto_was_on = self.engine.auto_create_processes
+        self.engine.auto_create_processes = False
+        
+        # Definir características variadas para los 20 procesos
+        # (tamaño_mb, duración_ticks, prioridad)
+        process_configs = [
+            (8, 30, 2), (12, 45, 1), (16, 60, 3), (20, 40, 2), (24, 50, 1),
+            (10, 35, 4), (14, 55, 2), (18, 70, 1), (22, 45, 3), (26, 65, 2),
+            (6, 25, 5), (15, 50, 2), (19, 60, 1), (23, 40, 3), (28, 75, 2),
+            (9, 30, 4), (13, 45, 1), (17, 55, 3), (21, 50, 2), (25, 65, 1)
+        ]
+        
+        created_count = 0
+        for i, (size, duration, priority) in enumerate(process_configs, 1):
+            try:
+                p = self.engine.manual_create_process(size, duration, priority)
+                created_count += 1
+                self.print_msg(f"  [{i}/20] {p.name} - {size}MB, {duration}t, Prio {priority}, PID {p.pid}")
+            except Exception as e:
+                self.print_msg(f"  Error creando proceso {i}: {str(e)}")
+        
+        # Restaurar estado de creación automática
+        self.engine.auto_create_processes = auto_was_on
+        
+        self.print_msg(f"=== Escenario cargado: {created_count}/20 procesos creados ===")
+        self.print_msg("Inicia la simulación con 'start' para evaluar el sistema.")
