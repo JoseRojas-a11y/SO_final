@@ -4,6 +4,7 @@ from PyQt6.QtWidgets import (
     QComboBox, QSpinBox
 )
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QFont
 
 
 class ProcessesView(QWidget):
@@ -20,10 +21,11 @@ class ProcessesView(QWidget):
         root.addLayout(header_layout)
 
         # Tabla de procesos
-        self.process_table = QTableWidget(0, 9)
+        self.process_table = QTableWidget(0, 15)
         self.process_table.setMinimumHeight(300)
         self.process_table.setHorizontalHeaderLabels([
             "PID", "Nombre", "Estado", "CPU", "CPU %", "Mem MB",
+            "Código MB", "Datos MB", "Extra MB", "PC", "Registros", "Dir. Inicio",
             "Restante", "Espera", "Prioridad"
         ])
         header = self.process_table.horizontalHeader()
@@ -224,7 +226,12 @@ class ProcessesView(QWidget):
         self.process_queue_list.addItem("=== NUEVO (NEW) ===")
         if new_processes:
             for p in new_processes:
-                self.process_queue_list.addItem(f"  {p.name} (PID {p.pid}) - Tamaño: {p.size_mb} MB")
+                # Usar el tamaño calculado a partir de los segmentos para consistencia
+                if hasattr(p, 'get_total_segment_size'):
+                    total_size = p.get_total_segment_size()
+                else:
+                    total_size = p.size_mb
+                self.process_queue_list.addItem(f"  {p.name} (PID {p.pid}) - Tamaño: {total_size} MB")
         else:
             self.process_queue_list.addItem("  (vacía)")
 
@@ -287,17 +294,89 @@ class ProcessesView(QWidget):
         self.process_table.setRowCount(len(processes))
         for r, p in enumerate(processes):
             cpu_str = str(p.cpu_id) if p.cpu_id is not None else "-"
-            self._set_row(self.process_table, r, [
+            # Calcular el tamaño total a partir de los segmentos para consistencia
+            if hasattr(p, 'get_total_segment_size'):
+                total_size = p.get_total_segment_size()
+            else:
+                total_size = getattr(p, 'size_mb', 0)
+            
+            # Obtener valores del PCB
+            pc = getattr(p, 'program_counter', 0)
+            registers = getattr(p, 'registers', {})
+            
+            # Formatear registros para visualización compacta (solo 2 primeros)
+            if registers:
+                reg_items = list(registers.items())[:2]
+                reg_summary = " ".join([f"{k}:{hex(v)[2:].upper().zfill(4)}" for k, v in reg_items])
+            else:
+                reg_summary = "N/A"
+            
+            # Crear tooltip completo con todos los registros + PC
+            if registers:
+                tooltip_lines = []
+                # Agrupar registros en pares para mejor visualización
+                reg_list = list(registers.items())
+                for i in range(0, len(reg_list), 2):
+                    if i + 1 < len(reg_list):
+                        reg1_name, reg1_val = reg_list[i]
+                        reg2_name, reg2_val = reg_list[i + 1]
+                        tooltip_lines.append(
+                            f"{reg1_name}: {hex(reg1_val)[2:].upper().zfill(4)}  "
+                            f"{reg2_name}: {hex(reg2_val)[2:].upper().zfill(4)}"
+                        )
+                    else:
+                        reg_name, reg_val = reg_list[i]
+                        tooltip_lines.append(f"{reg_name}: {hex(reg_val)[2:].upper().zfill(4)}")
+                # Agregar PC al final
+                tooltip_lines.append(f"PC: {hex(pc)[2:].upper().zfill(8)}")
+                tooltip_text = "\n".join(tooltip_lines)
+            else:
+                tooltip_text = "PC: 00000000"
+            
+            memory_addr = getattr(p, 'memory_start_address', 0)
+            memory_addr_str = f"0x{hex(memory_addr)[2:].upper().zfill(6)}" if memory_addr > 0 else "0x000000"
+            
+            # Crear items para todas las columnas excepto registros
+            columns_data = [
                 p.pid,
                 p.name,
                 p.state,
                 cpu_str,
                 f"{p.cpu_usage:.1f}",
-                p.memory_usage_mb,
+                total_size,  # Mostrar el tamaño total calculado desde los segmentos
+                getattr(p, 'code_size_mb', 0),
+                getattr(p, 'data_size_mb', 0),
+                getattr(p, 'extra_memory_mb', 0),
+                pc,  # Program Counter
+                reg_summary,  # Registros (será reemplazado con item especial)
+                memory_addr_str,  # Dirección de inicio
                 f"{p.remaining_ticks}/{p.duration_ticks}",
                 p.waiting_ticks,
                 p.priority,
-            ])
+            ]
+            
+            # Índice de la columna de registros (10 en el orden actual)
+            registers_col_index = 10
+            
+            # Crear items para todas las columnas
+            for c, value in enumerate(columns_data):
+                item = QTableWidgetItem(str(value))
+                item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                
+                # Aplicar formato especial a la columna de registros
+                if c == registers_col_index:
+                    # Fuente monoespaciada para alineación perfecta
+                    mono_font = QFont("Consolas", 9)
+                    # Intentar fuentes alternativas si Consolas no está disponible
+                    if not mono_font.exactMatch():
+                        mono_font = QFont("Courier New", 9)
+                    if not mono_font.exactMatch():
+                        mono_font = QFont("Monaco", 9)
+                    item.setFont(mono_font)
+                    # Tooltip con información completa
+                    item.setToolTip(tooltip_text)
+                
+                self.process_table.setItem(r, c, item)
 
     def _refresh_global_stats(self):
         m = self.engine.metrics

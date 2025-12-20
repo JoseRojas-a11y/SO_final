@@ -9,6 +9,17 @@ _process_id_counter = itertools.count(1)
 class Process:
     name: str
     size_mb: int
+    # Segmentación de memoria
+    code_size_mb: int = 0  # Tamaño del código ejecutable
+    data_size_mb: int = 0  # Tamaño del segmento de datos
+    extra_memory_mb: int = 0  # Memoria variable/dinámica
+    # Simulación de errores
+    exit_code: int = 0  # 0 para éxito, otro valor para error
+    has_error: bool = False  # Marca si el proceso fallará
+    # PCB detallado - Complejidad del proceso
+    program_counter: int = 0  # Contador de programa (inicia en 0)
+    registers: dict = field(default_factory=lambda: {"AX": 0, "BX": 0, "CX": 0, "DX": 0})  # Registros de CPU
+    memory_start_address: int = 0  # Dirección física base (hexadecimal simulado)
     cpu_usage: float = 0.0  # porcentaje 0-100
     memory_usage_mb: int = 0  # asignado real
     memory_unit_id: Optional[int] = None  # unidad de memoria asignada
@@ -33,6 +44,14 @@ class Process:
     hardware_interrupt_probability: float = 0.02  # Sensibilidad a interrupciones de hardware
     last_interrupt_tick: Optional[int] = None
     
+    def get_total_segment_size(self) -> int:
+        """Calcula el tamaño total a partir de la suma de los segmentos."""
+        return self.code_size_mb + self.data_size_mb + self.extra_memory_mb
+    
+    def validate_segment_consistency(self) -> bool:
+        """Valida que size_mb sea igual a la suma de los segmentos."""
+        return self.size_mb == self.get_total_segment_size()
+    
     def tick(self):
         if self.state == "TERMINATED":
             return
@@ -42,6 +61,17 @@ class Process:
             if self.remaining_ticks <= 0:
                 self.remaining_ticks = 0
                 self.state = "TERMINATED"
+            else:
+                # Simular actividad del proceso: incrementar program counter
+                # Simula ejecución de instrucciones (4 a 16 bytes por tick)
+                pc_increment = random.randint(4, 16)
+                self.program_counter += pc_increment
+                
+                # Modificar aleatoriamente uno de los registros para mostrar actividad
+                if self.registers:
+                    register_name = random.choice(list(self.registers.keys()))
+                    # Modificar el registro con un valor aleatorio (simula operaciones)
+                    self.registers[register_name] = (self.registers[register_name] + random.randint(-100, 100)) & 0xFFFF
 
         # Simular fluctuación CPU
         self.cpu_usage = max(0.0, min(100.0, self.cpu_usage + random.uniform(-10, 10)))
