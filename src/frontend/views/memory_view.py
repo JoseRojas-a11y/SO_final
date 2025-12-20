@@ -1,6 +1,6 @@
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QGroupBox, QTableWidget,
-    QHeaderView, QTableWidgetItem, QComboBox
+    QHeaderView, QTableWidgetItem
 )
 from PyQt6.QtCore import Qt
 from ..components.memory_bar import MemoryBar
@@ -19,6 +19,7 @@ class MemoryView(QWidget):
         units_layout.setSpacing(10)
         self.unit_bars = {}
         self.unit_stats_labels = {}
+        self.unit_alg_labels = {}
         for i, unit in enumerate(getattr(self.engine, 'memory_units', [])):
             bar = MemoryBar(unit.manager.snapshot_blocks(), unit.manager.total_mb)
             self.unit_bars[i] = bar
@@ -28,30 +29,12 @@ class MemoryView(QWidget):
             header.setStyleSheet("font-weight:bold;")
             info_layout.addWidget(header)
 
-            # Controles de algoritmos
-            ctrl = QHBoxLayout()
-            alloc_label = QLabel("Asignación:")
-            alloc_combo = QComboBox()
-            alloc_combo.setObjectName(f"alloc_combo_{i}")
-            alloc_combo.addItems(["first", "best", "worst"])
-            idx = alloc_combo.findText(unit.manager.algorithm)
-            if idx >= 0:
-                alloc_combo.setCurrentIndex(idx)
-            alloc_combo.currentTextChanged.connect(lambda name, idx=i: self._on_change_alloc_alg(idx, name))
-            ctrl.addWidget(alloc_label)
-            ctrl.addWidget(alloc_combo)
-
-            page_label = QLabel("Paginación:")
-            page_combo = QComboBox()
-            page_combo.setObjectName(f"page_combo_{i}")
-            page_combo.addItems(["FIFO", "LRU", "Optimal"])
-            idxp = page_combo.findText(unit.paged_manager.replacement_alg)
-            if idxp >= 0:
-                page_combo.setCurrentIndex(idxp)
-            page_combo.currentTextChanged.connect(lambda name, idx=i: self._on_change_page_alg(idx, name))
-            ctrl.addWidget(page_label)
-            ctrl.addWidget(page_combo)
-            info_layout.addLayout(ctrl)
+            # Información de algoritmos (solo lectura)
+            alg_info = QLabel(f"Asignación: {unit.manager.algorithm} | Paginación: {unit.paged_manager.replacement_alg}")
+            alg_info.setStyleSheet("color: #666; font-size: 10px;")
+            alg_info.setObjectName(f"unit_alg_{i}")
+            self.unit_alg_labels[i] = alg_info
+            info_layout.addWidget(alg_info)
 
             info_layout.addWidget(bar)
 
@@ -118,15 +101,10 @@ class MemoryView(QWidget):
                     f"Usado: {used} MB   Frag: {frag:.2f}%   Eff: {eff:.2f}%   "
                     f"Faults: {pm.page_faults}   Hits: {pm.page_hits}   FaultRate: {pm.page_fault_rate()*100:.2f}%   Utilización: {pm.memory_utilization()*100:.1f}%"
                 )
-            # activar/desactivar controles según estado de ejecución
-            alloc_combo = self.units_group.findChild(QComboBox, f"alloc_combo_{i}")
-            page_combo = self.units_group.findChild(QComboBox, f"page_combo_{i}")
-            if alloc_combo:
-                alloc_combo.setCurrentText(unit.manager.algorithm)
-                alloc_combo.setEnabled(not getattr(self.engine, 'is_running', False))
-            if page_combo:
-                page_combo.setCurrentText(unit.paged_manager.replacement_alg)
-                page_combo.setEnabled(not getattr(self.engine, 'is_running', False))
+            # Actualizar información de algoritmos
+            alg_label = self.unit_alg_labels.get(i)
+            if alg_label:
+                alg_label.setText(f"Asignación: {unit.manager.algorithm} | Paginación: {unit.paged_manager.replacement_alg}")
 
     def _refresh_units_table(self):
         stats = self.engine.memory_unit_summaries()
@@ -161,12 +139,3 @@ class MemoryView(QWidget):
         )
         self.storage_summary.setText(text)
 
-    def _on_change_alloc_alg(self, unit_index: int, name: str):
-        if hasattr(self.engine, 'set_memory_unit_alloc_alg'):
-            self.engine.set_memory_unit_alloc_alg(unit_index, name)
-        self.refresh_all()
-
-    def _on_change_page_alg(self, unit_index: int, name: str):
-        if hasattr(self.engine, 'set_memory_unit_page_alg'):
-            self.engine.set_memory_unit_page_alg(unit_index, name)
-        self.refresh_all()

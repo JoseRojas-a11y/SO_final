@@ -4,7 +4,7 @@ class ConfigDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Configuración de Simulación")
-        self.resize(350, 300)
+        self.resize(350, 400)
         
         main_layout = QVBoxLayout(self)
         
@@ -31,7 +31,7 @@ class ConfigDialog(QDialog):
         mem_group = QGroupBox("Configuración de Memoria")
         mem_layout = QFormLayout(mem_group)
         
-        mem_layout.addRow(QLabel("Ten en cuenta que 16 MB están reservados para el sistema."))
+        mem_layout.addRow(QLabel("Ten en cuenta que 64 MB están reservados para el sistema."))
 
         # Memoria: unidades y capacidad por unidad
         self.mem_units_spin = QSpinBox()
@@ -43,8 +43,20 @@ class ConfigDialog(QDialog):
         self.mem_capacity_spin = QSpinBox()
         self.mem_capacity_spin.setRange(64, 4096)
         self.mem_capacity_spin.setSingleStep(64)
-        self.mem_capacity_spin.setValue(256)
+        self.mem_capacity_spin.setValue(1024)  # 1 GB por defecto (más realista)
         mem_layout.addRow("Capacidad por unidad (MB):", self.mem_capacity_spin)
+
+        # Algoritmo de asignación de memoria
+        self.alloc_alg_combo = QComboBox()
+        self.alloc_alg_combo.addItems(["first", "best", "worst"])
+        self.alloc_alg_combo.setCurrentText("first")
+        mem_layout.addRow("Algoritmo de asignación:", self.alloc_alg_combo)
+
+        # Algoritmo de paginación
+        self.page_alg_combo = QComboBox()
+        self.page_alg_combo.addItems(["FIFO", "LRU", "Optimal"])
+        self.page_alg_combo.setCurrentText("FIFO")
+        mem_layout.addRow("Algoritmo de paginación:", self.page_alg_combo)
         
         main_layout.addWidget(mem_group)
         
@@ -66,4 +78,6 @@ class ConfigDialog(QDialog):
             "threads_per_cpu": self.threads_spin.value(),
             "memory_units": self.mem_units_spin.value(),
             "memory_unit_capacity_mb": self.mem_capacity_spin.value(),
+            "allocation_algorithm": self.alloc_alg_combo.currentText(),
+            "paging_algorithm": self.page_alg_combo.currentText(),
         }

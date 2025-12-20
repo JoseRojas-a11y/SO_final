@@ -18,7 +18,9 @@ def launch_gui():
             num_cpus=config["cpu_count"],
             threads_per_cpu=config["threads_per_cpu"],
             num_memory_units=config.get("memory_units", 2),
-            memory_unit_capacity_mb=config.get("memory_unit_capacity_mb", 256),
+            memory_unit_capacity_mb=config.get("memory_unit_capacity_mb", 1024),
+            allocation_algorithm=config.get("allocation_algorithm", "first"),
+            paging_algorithm=config.get("paging_algorithm", "FIFO"),
         )
         w = MainWindow(engine)
         w.show()
