@@ -50,7 +50,9 @@ class SimulationEngine:
         num_cpus: int = 4,
         threads_per_cpu: int = 2,
         num_memory_units: int = 2,
-        memory_unit_capacity_mb: int = 256,
+        memory_unit_capacity_mb: int = 1024,  # 1 GB por defecto
+        allocation_algorithm: str = "first",
+        paging_algorithm: str = "FIFO",
     ) -> None:
         # Limitar unidades de memoria: mínimo 1, máximo 8
         self.num_memory_units = max(1, min(8, int(num_memory_units)))
@@ -68,14 +70,14 @@ class SimulationEngine:
             mu = SimpleNamespace(
                 id=i,
                 total_mb=self.memory_unit_capacity_mb,
-                alloc_alg="first",
-                page_alg="FIFO",
+                alloc_alg=allocation_algorithm,
+                page_alg=paging_algorithm,
                 manager=None,
                 paged_manager=None,
                 system_reserved_mb=0,
             )
             # Reservar memoria del sistema SOLO en la primera unidad
-            base_sys_mb = 16  # Asunción: núcleo + estructuras base
+            base_sys_mb = 64  # Núcleo + estructuras base (más realista para un SO completo)
             if i == 0:
                 mu.system_reserved_mb = min(base_sys_mb, mu.total_mb)
                 mu.manager = MemoryManager(mu.total_mb, mu.alloc_alg, strategy_for(mu.alloc_alg), system_reserved_mb=mu.system_reserved_mb)
@@ -676,12 +678,17 @@ class SimulationEngine:
         for i in range(self.num_memory_units):
             alloc_alg = self.memory_units[i].manager.algorithm if i < len(self.memory_units) else "first"
             page_alg = self.memory_units[i].paged_manager.replacement_alg if i < len(self.memory_units) else "FIFO"
-            base_sys_mb = 16
+            base_sys_mb = 64  # Núcleo + estructuras base
+            # Reservar memoria del sistema SOLO en la primera unidad
+            if i == 0:
+                system_reserved = min(base_sys_mb, self.memory_unit_capacity_mb)
+            else:
+                system_reserved = 0
             mgr = MemoryManager(
                 self.memory_unit_capacity_mb,
                 alloc_alg,
                 FirstFitStrategy() if alloc_alg == "first" else BestFitStrategy() if alloc_alg == "best" else WorstFitStrategy(),
-                system_reserved_mb=min(base_sys_mb, self.memory_unit_capacity_mb)
+                system_reserved_mb=system_reserved
             )
             pm = PagedMemoryManager(self.memory_unit_capacity_mb, page_size_mb=4, replacement_alg=page_alg)
             mu = SimpleNamespace(
@@ -691,7 +698,7 @@ class SimulationEngine:
                 page_alg=page_alg,
                 manager=mgr,
                 paged_manager=pm,
-                system_reserved_mb=min(base_sys_mb, self.memory_unit_capacity_mb),
+                system_reserved_mb=system_reserved,
             )
             new_units.append(mu)
         self.memory_units = new_units
@@ -733,7 +740,7 @@ class SimulationEngine:
 
     def _update_system_reserved_memory(self):
         active_count = len([p for p in self.processes.values() if p.state != "TERMINATED"])
-        base_sys_mb = 16
+        base_sys_mb = 64  # Núcleo + estructuras base
         per_proc_mb = 2
         required = base_sys_mb + active_count * per_proc_mb
         # Expandir SOLO en la primera unidad
