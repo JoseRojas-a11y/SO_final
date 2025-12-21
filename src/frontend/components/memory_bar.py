@@ -55,7 +55,11 @@ class MemoryBar(QWidget):
                     painter.drawText(x, 0, bw, bar_h, Qt.AlignmentFlag.AlignCenter, label)
 
             # Draw Addressing / Paging Grid
-            painter.setPen(QPen(QColor(0, 0, 0, 100), 1, Qt.PenStyle.DashLine))
+            text_color = self.palette().text().color()
+            grid_color = self.palette().text().color()
+            grid_color.setAlpha(100)
+            
+            painter.setPen(QPen(grid_color, 1, Qt.PenStyle.DashLine))
             page_size = 32 # 32MB grid
             num_pages = self.total // page_size
             
@@ -63,11 +67,13 @@ class MemoryBar(QWidget):
                 mb = i * page_size
                 x = int(mb * scale)
                 painter.drawLine(x, 0, x, h)
-                painter.setPen(QColor(0, 0, 0))
+                
+                painter.setPen(text_color)
                 # Draw text only if it fits
                 if i <= num_pages:
                     painter.drawText(x + 2, h - 2, f"{mb}")
-                painter.setPen(QPen(QColor(0, 0, 0, 100), 1, Qt.PenStyle.DashLine))
+                
+                painter.setPen(QPen(grid_color, 1, Qt.PenStyle.DashLine))
 
     def mouseMoveEvent(self, event: QMouseEvent):
         x = event.pos().x()

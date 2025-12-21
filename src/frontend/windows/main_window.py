@@ -1,12 +1,13 @@
 from PyQt6.QtWidgets import (
-    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
-    QLabel, QFrame, QGroupBox, QHeaderView, QDialog, QPushButton, QSpinBox, QFormLayout,
+    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QLabel, QFrame, QGroupBox, QDialog, QPushButton, QSpinBox, QFormLayout,
     QListWidget, QGridLayout, QCheckBox, QScrollArea, QLayoutItem, QAbstractItemView,
-    QListWidgetItem
+    QListWidgetItem, QMessageBox
 )
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QColor
 from ...simulation.engine import SimulationEngine
+from ...simulation.reporter import SimulationReporter
 from ..components.console import ConsoleWidget
 from ..views.processes_view import ProcessesView
 from ..views.memory_view import MemoryView
@@ -79,6 +80,13 @@ class MainWindow(QMainWindow):
         right_layout = QVBoxLayout(right_widget)
         right_layout.setSpacing(3)
         right_layout.setContentsMargins(2, 2, 2, 2)
+        
+        # Botón Finalizar Programa
+        self.btn_finish = QPushButton("Finalizar Programa")
+        self.btn_finish.setStyleSheet("background-color: #d32f2f; color: white; font-weight: bold; padding: 5px;")
+        self.btn_finish.clicked.connect(self.finish_simulation)
+        right_layout.addWidget(self.btn_finish)
+
         # Checkboxes de Navegación
         nav_group = QGroupBox("Opciones")
         nav_layout = QVBoxLayout(nav_group)
@@ -148,7 +156,7 @@ class MainWindow(QMainWindow):
             self.layer_flow_list = QListWidget()
             self.layer_flow_list.setMaximumHeight(120)
             self.layer_flow_list.setWordWrap(True)
-            layer_flow_layout.addWidget(QLabel("Últimas interacciones (máx. 10):"))
+            layer_flow_layout.addWidget(QLabel("Últimas interacciones (máx. 5):"))
             layer_flow_layout.addWidget(self.layer_flow_list)
             right_layout.addWidget(layer_flow_group)
         elif engine.architecture == "Microkernel":
@@ -179,7 +187,7 @@ class MainWindow(QMainWindow):
         self.btn_restart.clicked.connect(self.restart_simulation)
         controls_layout.addWidget(self.btn_restart, 0, 1)
         
-        lbl_speed = QLabel("Velocidad (ms):")
+        lbl_speed = QLabel("Duración de Tick (ms):")
         controls_layout.addWidget(lbl_speed, 1, 0)
         
         self.spin_speed = QSpinBox()
@@ -293,52 +301,60 @@ class MainWindow(QMainWindow):
         """Actualiza el panel de flujo entre capas (solo Modular)."""
         if not hasattr(self, 'layer_flow_list'):
             return
-        events = self.engine.layer_flow_events()
-        if self.layer_flow_list.count() != len(events):
-            self.layer_flow_list.clear()
-            for ev in events:
-                # Formato mejorado con colores e información detallada
-                tick = ev.get('tick', '?')
-                source = ev.get('source', '?')
-                target = ev.get('target', '?')
-                action = ev.get('action', '?')
-                
-                # Parsear acción para mostrar información relevante
-                action_display = action
-                if ':' in action:
-                    action_type, action_data = action.split(':', 1)
-                    if action_type == 'alloc':
-                        action_display = f"💾 Asignar memoria PID:{action_data}"
-                    elif action_type == 'dispatch':
-                        action_display = f"▶️ Despachar proceso PID:{action_data}"
-                    elif action_type == 'ready':
-                        action_display = f"✅ Marcar listo PID:{action_data}"
-                    elif action_type == 'syscall':
-                        action_display = f"🔧 Syscall PID:{action_data}"
-                    elif action_type == 'io_req':
-                        action_display = f"📥 Solicitud I/O PID:{action_data}"
-                    elif action_type == 'load':
-                        action_display = f"⬆️ Cargar módulo: {action_data}"
-                    elif action_type == 'unload':
-                        action_display = f"⬇️ Descargar módulo: {action_data}"
-                
-                item_text = f"[Tick {tick}] {source} → {target}\n   {action_display}"
-                item = QListWidgetItem(item_text)
-                
-                # Color según el tipo de acción
-                if 'alloc' in action or 'memory' in action.lower():
-                    item.setBackground(QColor(220, 237, 255))  # Azul claro para memoria
-                elif 'dispatch' in action or 'ready' in action:
-                    item.setBackground(QColor(220, 255, 220))  # Verde claro para procesos
-                elif 'io' in action.lower() or 'syscall' in action.lower():
-                    item.setBackground(QColor(255, 247, 220))  # Amarillo claro para I/O
-                elif 'load' in action or 'unload' in action:
-                    item.setBackground(QColor(255, 220, 237))  # Rosa claro para módulos
-                else:
-                    item.setBackground(QColor(245, 245, 245))  # Gris claro por defecto
-                
-                self.layer_flow_list.addItem(item)
-            self.layer_flow_list.scrollToBottom()
+        
+        # Obtener solo los últimos 5 eventos
+        all_events = self.engine.layer_flow_events()
+        events = all_events[-5:] if all_events else []
+        
+        # Reconstruir lista siempre para asegurar que se muestra lo último
+        self.layer_flow_list.clear()
+        
+        for ev in events:
+            # Formato mejorado con colores e información detallada
+            tick = ev.get('tick', '?')
+            source = ev.get('source', '?')
+            target = ev.get('target', '?')
+            action = ev.get('action', '?')
+            
+            # Parsear acción para mostrar información relevante
+            action_display = action
+            if ':' in action:
+                action_type, action_data = action.split(':', 1)
+                if action_type == 'alloc':
+                    action_display = f"💾 Asignar memoria PID:{action_data}"
+                elif action_type == 'dispatch':
+                    action_display = f"▶️ Despachar proceso PID:{action_data}"
+                elif action_type == 'ready':
+                    action_display = f"✅ Marcar listo PID:{action_data}"
+                elif action_type == 'syscall':
+                    action_display = f"🔧 Syscall PID:{action_data}"
+                elif action_type == 'io_req':
+                    action_display = f"📥 Solicitud I/O PID:{action_data}"
+                elif action_type == 'load':
+                    action_display = f"⬆️ Cargar módulo: {action_data}"
+                elif action_type == 'unload':
+                    action_display = f"⬇️ Descargar módulo: {action_data}"
+            
+            item_text = f"[Tick {tick}] {source} → {target}\n   {action_display}"
+            item = QListWidgetItem(item_text)
+            
+            # Forzar texto negro para asegurar contraste con fondos claros
+            item.setForeground(QColor(0, 0, 0))
+            
+            # Color según el tipo de acción
+            if 'alloc' in action or 'memory' in action.lower():
+                item.setBackground(QColor(220, 237, 255))  # Azul claro para memoria
+            elif 'dispatch' in action or 'ready' in action:
+                item.setBackground(QColor(220, 255, 220))  # Verde claro para procesos
+            elif 'io' in action.lower() or 'syscall' in action.lower():
+                item.setBackground(QColor(255, 247, 220))  # Amarillo claro para I/O
+            elif 'load' in action or 'unload' in action:
+                item.setBackground(QColor(255, 220, 237))  # Rosa claro para módulos
+            else:
+                item.setBackground(QColor(245, 245, 245))  # Gris claro por defecto
+            
+            self.layer_flow_list.addItem(item)
+        self.layer_flow_list.scrollToBottom()
         
     def update_architecture_view(self):
         """Actualiza la información de la arquitectura incluyendo visualización gráfica."""
@@ -461,3 +477,24 @@ class MainWindow(QMainWindow):
              self.spin_speed.blockSignals(True)
              self.spin_speed.setValue(ms)
              self.spin_speed.blockSignals(False)
+
+    def finish_simulation(self):
+        """Finaliza la simulación, genera reporte y cierra."""
+        self.pause_simulation()
+        
+        try:
+            reporter = SimulationReporter(self.engine)
+            filename = reporter.generate()
+            
+            QMessageBox.information(
+                self, 
+                "Simulación Finalizada", 
+                f"Se ha generado el reporte exitosamente:\n{filename}\n\nEl programa se cerrará."
+            )
+            self.close()
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                "Error",
+                f"Error al generar el reporte: {str(e)}"
+            )

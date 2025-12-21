@@ -43,6 +43,7 @@ class Process:
     syscall_probability: float = 0.05  # Probabilidad de generar una interrupción de software
     hardware_interrupt_probability: float = 0.02  # Sensibilidad a interrupciones de hardware
     last_interrupt_tick: Optional[int] = None
+    pending_fault_page: Optional[int] = None # Página que causó el fallo pendiente de carga
     
     def get_total_segment_size(self) -> int:
         """Calcula el tamaño total a partir de la suma de los segmentos."""

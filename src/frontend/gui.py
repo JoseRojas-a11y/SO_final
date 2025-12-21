@@ -21,6 +21,9 @@ def launch_gui():
             memory_unit_capacity_mb=config.get("memory_unit_capacity_mb", 1024),
             allocation_algorithm=config.get("allocation_algorithm", "first"),
             paging_algorithm=config.get("paging_algorithm", "FIFO"),
+            tlb_enabled=config.get("tlb_enabled", True),
+            page_table_type=config.get("page_table_type", "SingleLevel"),
+            storage_type=config.get("storage_type", "HDD"),
         )
         w = MainWindow(engine)
         w.show()

@@ -94,17 +94,14 @@ class RoundRobin(Scheduler):
     def __init__(self, quantum: int = 4):
         super().__init__()
         self.quantum = quantum
-        self.rr_queue: Deque[Process] = deque()
 
     def add_process(self, process: Process):
         process.state = "READY"
-        self.rr_queue.append(process)
+        self.ready_queue.append(process)
 
     def next_process(self, current_tick: int) -> Optional[Process]:
-        if self.rr_queue:
-            sorted_queue = sorted(self.rr_queue, key=lambda p: p.priority)
-            self.rr_queue = deque(sorted_queue)
-            next_proc = self.rr_queue.popleft()
+        if self.ready_queue:
+            next_proc = self.ready_queue.pop(0)
             self.perform_context_switch(next_proc)
             return next_proc
         return None

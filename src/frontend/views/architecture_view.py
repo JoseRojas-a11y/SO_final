@@ -1,7 +1,7 @@
 from PyQt6.QtWidgets import QWidget
-from PyQt6.QtCore import Qt, QTimer, QPoint
+from PyQt6.QtCore import Qt, QTimer, QPoint, QRect
 from PyQt6.QtGui import QPainter, QColor, QBrush, QPen, QFont, QPolygon
-from typing import Dict, Optional, List, Tuple
+from typing import Dict, Optional, List
 from math import sqrt, atan2, cos, sin
 
 class ArchitectureView(QWidget):
@@ -19,7 +19,6 @@ class ArchitectureView(QWidget):
         # Configuración de tamaño
         self.setMinimumSize(600, 400)
         self.resize(600, 400)
-        self.setStyleSheet("background-color: #f5f5f5;")
         
         # Timer para animar flujos
         self.animation_timer = QTimer(self)
@@ -57,8 +56,8 @@ class ArchitectureView(QWidget):
         if not new_events:
             return
         
-        # Procesar los últimos 10 eventos para asegurar que no perdemos nada importante
-        recent_events = new_events[-10:]
+        # Procesar los últimos 5 eventos para asegurar que no perdemos nada importante
+        recent_events = new_events[-5:]
         
         for event in recent_events:
             event_key = (
@@ -94,8 +93,8 @@ class ArchitectureView(QWidget):
             self._processed_event_keys = set(sorted_keys[:50])
         
         # Limitar flujos activos
-        if len(self.active_flows) > 10:
-            self.active_flows = self.active_flows[-10:]
+        if len(self.active_flows) > 5:
+            self.active_flows = self.active_flows[-5:]
     
     def _update_animation(self):
         """Actualiza el progreso de la animación."""
@@ -343,11 +342,12 @@ class ArchitectureView(QWidget):
                 
                 # Etiqueta mejorada con más información (rango extendido para mejor legibilidad)
                 if progress > 0.20 and progress < 0.80:
-                    font_label = QFont("Arial", 6, QFont.Weight.Bold)
+                    font_label = QFont("Arial", 7, QFont.Weight.Bold)
                     painter.setFont(font_label)
                     
                     # Extraer PID de la acción
                     action_text = action.split(":")[-1] if ":" in action else ""
+                    label_text = ""
                     
                     # Determinar texto a mostrar según tipo
                     if "alloc" in action.lower() and action_text:
@@ -364,27 +364,33 @@ class ArchitectureView(QWidget):
                             pass
                         
                         label_text = f"PID:{action_text}{process_info}"
-                        # Fondo semitransparente para mejor legibilidad (más ancho si hay info adicional)
-                        bg_rect_x = int(packet_x + 8)
-                        bg_rect_y = int(packet_y - 10)
-                        bg_rect_w = 48 if process_info else 35
-                        bg_rect_h = 12
-                        painter.fillRect(bg_rect_x - 2, bg_rect_y - 1, bg_rect_w, bg_rect_h, 
-                                       QColor(255, 255, 255, int(200 * opacity)))
-                        painter.setPen(QPen(flow_color, 1))
-                        painter.drawRect(bg_rect_x - 2, bg_rect_y - 1, bg_rect_w, bg_rect_h)
-                        painter.setPen(QPen(QColor(0, 0, 0, int(255 * opacity)), 1))
-                        painter.drawText(bg_rect_x, bg_rect_y, bg_rect_w - 4, bg_rect_h, 
-                                       Qt.AlignmentFlag.AlignCenter, label_text)
                     elif action_text:
                         # Para otros casos, mostrar tipo y PID
                         label_text = f"{flow_type}:{action_text}"
-                        painter.setPen(QPen(QColor(0, 0, 0, int(255 * opacity)), 1))
-                        label_rect_x = int(packet_x + 8)
-                        label_rect_y = int(packet_y - 8)
-                        painter.drawText(label_rect_x, label_rect_y, 32, 12, 
-                                       Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, 
-                                       label_text)
+                    
+                    if label_text:
+                        # Calcular tamaño del texto
+                        fm = painter.fontMetrics()
+                        text_w = fm.horizontalAdvance(label_text)
+                        text_h = fm.height()
+                        
+                        bg_rect_x = int(packet_x + 8)
+                        bg_rect_y = int(packet_y - 10)
+                        bg_rect_w = text_w + 8
+                        bg_rect_h = text_h + 4
+                        
+                        # Fondo oscuro para mejor contraste en cualquier tema
+                        painter.fillRect(bg_rect_x, bg_rect_y, bg_rect_w, bg_rect_h, 
+                                       QColor(40, 40, 40, int(230 * opacity)))
+                        
+                        # Borde del color del flujo
+                        painter.setPen(QPen(flow_color, 1))
+                        painter.drawRect(bg_rect_x, bg_rect_y, bg_rect_w, bg_rect_h)
+                        
+                        # Texto blanco
+                        painter.setPen(QPen(QColor(255, 255, 255, int(255 * opacity)), 1))
+                        painter.drawText(bg_rect_x, bg_rect_y, bg_rect_w, bg_rect_h, 
+                                       Qt.AlignmentFlag.AlignCenter, label_text)
                 
                 # Dibujar flecha al final si está cerca del destino
                 if progress > 0.7:
@@ -410,4 +416,3 @@ class ArchitectureView(QWidget):
         painter.setPen(QPen(color, 2))
         polygon = QPolygon([QPoint(x2, y2), QPoint(int(arrow_x1), int(arrow_y1)), QPoint(int(arrow_x2), int(arrow_y2))])
         painter.drawPolygon(polygon)
-

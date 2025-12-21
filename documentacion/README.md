@@ -24,6 +24,8 @@ simulados**.
 -   `05_prioridades_procesos.md` --- Sistema de prioridades de procesos:
     asignación automática, algoritmos de planificación basados en prioridades,
     aging y preemption.
+-   `MANUAL_INSTALACION.md` --- Guía paso a paso para instalar y configurar el entorno.
+-   `MANUAL_USO.md` --- Guía de usuario para operar la simulación y entender la interfaz.
 -   Código fuente:\
     `src/simulation/`, `src/frontend/`, `run.py`.
 

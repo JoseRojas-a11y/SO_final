@@ -38,3 +38,15 @@ class SimulationMetrics:
         if attempts == 0:
             return 0.0
         return self.alloc_success[alg] / attempts
+
+    def throughput(self, total_ticks: int) -> float:
+        if total_ticks == 0: return 0.0
+        return self.completed_processes / total_ticks
+
+    def average_turnaround_time(self) -> float:
+        if self.completed_processes == 0: return 0.0
+        return self.total_turnaround_time / self.completed_processes
+
+    def average_waiting_time(self) -> float:
+        if self.completed_processes == 0: return 0.0
+        return self.total_waiting_time / self.completed_processes

@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import List, Optional, Dict, Deque
+from typing import List, Optional, Dict, Deque, Union
 from collections import deque
 from ..models import MemoryBlock, Process, Page, PageTableEntry
 from .strategies import AllocationStrategy
@@ -48,12 +48,16 @@ class MemoryManager:
         return AllocationResult(True, self.fragmentation_ratio(), self.efficiency(), self.algorithm)
 
     def release(self, process: Process):
-        if process.pid not in self.allocated_processes:
-            return
+        # Allow release even if not in allocated_processes map (safety sweep)
+        blocks_cleared = 0
         for b in self.blocks:
             if b.process_pid == process.pid:
                 b.process_pid = None
-        del self.allocated_processes[process.pid]
+                blocks_cleared += 1
+        
+        if process.pid in self.allocated_processes:
+            del self.allocated_processes[process.pid]
+            
         process.memory_usage_mb = 0
         self.merge_free()
         if self.auto_compact:
@@ -176,14 +180,20 @@ class PagedAllocationResult:
         self.algorithm = algorithm
         self.pages_allocated = pages_allocated
 
+from .mmu import MMU, PageTable
+
 class PagedMemoryManager:
-    def __init__(self, total_mb: int, page_size_mb: int = 4, replacement_alg: str = "FIFO"):
+    def __init__(self, total_mb: int, page_size_mb: int = 4, replacement_alg: str = "FIFO", 
+                 tlb_enabled: bool = True, page_table_type: str = "SingleLevel"):
         self.total_mb = total_mb
         self.page_size_mb = page_size_mb
         self.replacement_alg = replacement_alg
         self.num_frames = total_mb // page_size_mb
         self.frames: List[Page] = [Page(frame_number=i) for i in range(self.num_frames)]
-        self.page_tables: Dict[int, List[PageTableEntry]] = {}
+        
+        # Integración MMU
+        self.mmu = MMU(self, tlb_enabled=tlb_enabled, page_table_type=page_table_type)
+        
         self.fifo_queue: Deque[int] = deque()
         self.page_faults = 0
         self.page_hits = 0
@@ -191,64 +201,107 @@ class PagedMemoryManager:
         self.allocated_processes: Dict[int, int] = {}
         self.access_history: Dict[int, List[int]] = {}
 
+        # Simulación de almacenamiento "ROM" backing store
+        # Mapea PID -> Lista de PageTableEntries que representan todo el proceso en disco
+        self.backing_store: Dict[int, List[PageTableEntry]] = {}
+
     def allocate(self, process: Process, current_tick: int) -> PagedAllocationResult:
         size_mb = process.size_mb
         num_pages_needed = (size_mb + self.page_size_mb - 1) // self.page_size_mb
-        page_table = []
-        page_faults = 0
+        
+        # Inicializar Page Table en MMU
+        self.mmu.allocate_page_table(process.pid)
+        page_table_obj = self.mmu.get_process_table(process.pid) 
+        
+        # Crear entradas "en disco" (backing store)
+        backing_entries = []
         for page_num in range(num_pages_needed):
-            free_frame = self._find_free_frame()
-            if free_frame is not None:
-                frame = self.frames[free_frame]
-                frame.process_pid = process.pid
-                frame.page_number = page_num
-                frame.loaded_tick = current_tick
-                frame.last_accessed = current_tick
-                entry = PageTableEntry(
-                    page_number=page_num,
-                    frame_number=free_frame,
-                    valid=True,
-                    loaded_tick=current_tick,
-                    last_accessed=current_tick
-                )
-                page_table.append(entry)
-                self.fifo_queue.append(free_frame)
-            else:
-                victim_frame = self._select_victim_frame(process.pid, current_tick)
-                if victim_frame is None:
-                    return PagedAllocationResult(False, page_faults, self.replacement_alg, len(page_table))
-                old_page = self.frames[victim_frame]
-                if old_page.process_pid:
-                    if old_page.process_pid in self.page_tables:
-                        for entry in self.page_tables[old_page.process_pid]:
-                            if entry.frame_number == victim_frame:
-                                entry.valid = False
-                                entry.frame_number = None
-                frame = self.frames[victim_frame]
-                frame.process_pid = process.pid
-                frame.page_number = page_num
-                frame.loaded_tick = current_tick
-                frame.last_accessed = current_tick
-                frame.referenced = True
-                frame.modified = False
-                entry = PageTableEntry(
-                    page_number=page_num,
-                    frame_number=victim_frame,
-                    valid=True,
-                    loaded_tick=current_tick,
-                    last_accessed=current_tick
-                )
-                page_table.append(entry)
-                page_faults += 1
-                self.page_faults += 1
-                if victim_frame in self.fifo_queue:
-                    self.fifo_queue.remove(victim_frame)
-                self.fifo_queue.append(victim_frame)
-        self.page_tables[process.pid] = page_table
+            entry = PageTableEntry(
+                page_number=page_num,
+                frame_number=None,
+                valid=False, # Inicialmente no cargado en RAM (Demanda)
+                loaded_tick=0,
+                last_accessed=0
+            )
+            backing_entries.append(entry)
+            # También añadir a la page table del MMU como inválidas
+            page_table_obj.add_entry(entry)
+
+        self.backing_store[process.pid] = backing_entries
         self.allocated_processes[process.pid] = num_pages_needed
-        process.memory_usage_mb = num_pages_needed * self.page_size_mb
-        self.total_accesses += num_pages_needed
-        return PagedAllocationResult(True, page_faults, self.replacement_alg, num_pages_needed)
+        process.memory_usage_mb = 0 # Inicialmente 0 en RAM física
+
+        # Cargar algunas páginas iniciales (Pre-paging opcional, o pure demand paging)
+        # Vamos a cargar la página 0 obligatoriamente para que pueda arrancar
+        if num_pages_needed > 0:
+             self.resolve_fault(process.pid, 0, current_tick)
+
+        return PagedAllocationResult(True, 0, self.replacement_alg, num_pages_needed)
+
+    def resolve_fault(self, pid: int, page_number: int, current_tick: int) -> bool:
+        """Carga una página desde el backing store a un frame físico."""
+        if pid not in self.backing_store:
+            return False
+            
+        page_table_obj = self.mmu.get_process_table(pid)
+        if not page_table_obj:
+            return False
+
+        entry = page_table_obj.get_entry(page_number)
+        if not entry: # Should be in backing store/table even if invalid
+             # Fallback check backing store logic if somehow desynced
+             return False
+        
+        if entry.valid and entry.frame_number is not None:
+            return True # Ya está cargada
+
+        # Buscar frame libre o víctima
+        free_frame = self._find_free_frame()
+        victim_frame = None
+        
+        if free_frame is None:
+            victim_frame = self._select_victim_frame(pid, current_tick)
+            if victim_frame is None:
+                return False # No hay memoria
+            
+            # Desalojar víctima
+            old_page = self.frames[victim_frame]
+            if old_page.process_pid:
+                old_pt = self.mmu.get_process_table(old_page.process_pid)
+                if old_pt and old_page.page_number is not None:
+                     old_entry = old_pt.get_entry(old_page.page_number)
+                     if old_entry:
+                         old_entry.valid = False
+                         old_entry.frame_number = None
+                         # Update TLB invalidate
+                         # self.mmu.tlb.flush_process(old_page.process_pid) # Simplificado
+
+            free_frame = victim_frame
+        
+        # Cargar frame
+        frame = self.frames[free_frame]
+        frame.process_pid = pid
+        frame.page_number = page_number
+        frame.loaded_tick = current_tick
+        frame.last_accessed = current_tick
+        frame.referenced = True
+        frame.modified = False
+        
+        # Actualizar Page Table Entry
+        entry.valid = True
+        entry.frame_number = free_frame
+        entry.loaded_tick = current_tick
+        entry.last_accessed = current_tick
+        
+        # Actualizar TLB explícitamente si se desea, o dejar que el próximo acceso lo haga (Miss handled)
+        self.mmu.tlb.update(pid, page_number, free_frame, current_tick)
+        
+        # Mantener cola FIFO
+        if free_frame in self.fifo_queue:
+            self.fifo_queue.remove(free_frame)
+        self.fifo_queue.append(free_frame)
+        
+        return True
 
     def _find_free_frame(self) -> Optional[int]:
         for i, frame in enumerate(self.frames):
@@ -271,79 +324,60 @@ class PagedMemoryManager:
         elif self.replacement_alg == "Optimal":
             candidates = [(i, f) for i, f in enumerate(self.frames) if not f.free]
             if candidates:
-                victim = max(candidates, key=lambda x: current_tick - x[1].last_accessed)
+                # Simplificado: el que hace más tiempo se cargó si no tenemos oráculo
+                victim = min(candidates, key=lambda x: x[1].loaded_tick)
                 return victim[0]
         return None
 
-    def access_page(self, process: Process, page_number: int, current_tick: int) -> bool:
+    def access_page(self, process: Process, page_number: int, current_tick: int) -> Union[bool, str]:
+        """Retorna True si éxito, 'PAGE_FAULT' si fallo de página."""
         self.total_accesses += 1
-        if process.pid not in self.page_tables:
+        
+        # Usar MMU para traducir
+        result = self.mmu.translate(process.pid, page_number, current_tick)
+        
+        if result == "PAGE_FAULT":
+            self.page_faults += 1
+            return "PAGE_FAULT"
+        
+        if result == "SEGMENTATION_FAULT":
             return False
-        page_table = self.page_tables[process.pid]
-        if page_number >= len(page_table):
-            return False
-        entry = page_table[page_number]
-        if entry.valid and entry.frame_number is not None:
+            
+        if isinstance(result, int):
+            # Éxito: result es frame number
             self.page_hits += 1
-            entry.last_accessed = current_tick
-            entry.referenced = True
-            frame = self.frames[entry.frame_number]
+            frame = self.frames[result]
             frame.last_accessed = current_tick
             frame.referenced = True
-            return True
-        else:
-            self.page_faults += 1
-            free_frame = self._find_free_frame()
-            if free_frame is not None:
-                frame = self.frames[free_frame]
-                frame.process_pid = process.pid
-                frame.page_number = page_number
-                frame.loaded_tick = current_tick
-                frame.last_accessed = current_tick
-                entry.frame_number = free_frame
-                entry.valid = True
-                entry.loaded_tick = current_tick
-                entry.last_accessed = current_tick
-                self.fifo_queue.append(free_frame)
-            else:
-                victim_frame = self._select_victim_frame(process.pid, current_tick)
-                if victim_frame is not None:
-                    old_page = self.frames[victim_frame]
-                    if old_page.process_pid and old_page.process_pid in self.page_tables:
-                        for e in self.page_tables[old_page.process_pid]:
-                            if e.frame_number == victim_frame:
-                                e.valid = False
-                                e.frame_number = None
-                    frame = self.frames[victim_frame]
-                    frame.process_pid = process.pid
-                    frame.page_number = page_number
-                    frame.loaded_tick = current_tick
-                    frame.last_accessed = current_tick
-                    entry.frame_number = victim_frame
-                    entry.valid = True
-                    entry.loaded_tick = current_tick
+            
+            # Actualizar entrada en Page Table (Reference bit)
+            pt = self.mmu.get_process_table(process.pid)
+            if pt:
+                entry = pt.get_entry(page_number)
+                if entry:
+                    entry.referenced = True
                     entry.last_accessed = current_tick
-                    if victim_frame in self.fifo_queue:
-                        self.fifo_queue.remove(victim_frame)
-                    self.fifo_queue.append(victim_frame)
             return True
+            
+        return False
 
     def release(self, process: Process):
-        if process.pid not in self.page_tables:
-            return
-        page_table = self.page_tables[process.pid]
-        for entry in page_table:
-            if entry.valid and entry.frame_number is not None:
-                frame = self.frames[entry.frame_number]
+        self.mmu.release_process_resources(process.pid)
+        if process.pid in self.backing_store:
+            del self.backing_store[process.pid]
+            
+        # Liberar frames físicos
+        for frame in self.frames:
+            if frame.process_pid == process.pid:
                 frame.process_pid = None
                 frame.page_number = None
                 frame.last_accessed = 0
                 frame.loaded_tick = 0
                 frame.referenced = False
                 frame.modified = False
-                if entry.frame_number in self.fifo_queue:
-                    self.fifo_queue.remove(entry.frame_number)
-        del self.page_tables[process.pid]
+                if frame.frame_number in self.fifo_queue:
+                    self.fifo_queue.remove(frame.frame_number)
+        
         if process.pid in self.allocated_processes:
             del self.allocated_processes[process.pid]
         process.memory_usage_mb = 0
@@ -359,9 +393,15 @@ class PagedMemoryManager:
 
     def snapshot_frames(self) -> List[Page]:
         return list(self.frames)
-
+    
+    # Método para compatibilidad con main view que espera lista de entradas
+    # PERO, con diferentes tipos de tabla, esto puede ser complejo.
+    # Vamos a devolver la lista plana de todas las entradas válidas/inválidas conocidas
     def get_page_table(self, pid: int) -> Optional[List[PageTableEntry]]:
-        return self.page_tables.get(pid)
+        table = self.mmu.get_process_table(pid)
+        if table:
+            return table.get_all_entries()
+        return None
 
     def tick(self, current_tick: int):
         pass

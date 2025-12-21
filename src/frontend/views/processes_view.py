@@ -289,7 +289,8 @@ class ProcessesView(QWidget):
             self.process_queue_list.addItem("  (vacía)")
 
     def _refresh_process_table(self):
-        processes = self.engine.active_processes()
+        # Explicitly filter active processes again to be sure
+        processes = [p for p in self.engine.processes.values() if p.state != "TERMINATED"]
         processes.sort(key=lambda p: p.pid)
         self.process_table.setRowCount(len(processes))
         for r, p in enumerate(processes):

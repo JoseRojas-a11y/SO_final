@@ -37,15 +37,27 @@ Este documento resume el estado funcional, las decisiones de diseño, los algori
 - UI (`main_window.py`, `processes_view.py`, `memory_view.py`) consulta estado y ejecuta `tick()` del `engine` vía timer.
 
 ## Parámetros Configurables (actuales)
-- CPUs: por defecto 4 con 2 hilos cada una.
-- Algoritmos por CPU: seleccionables desde UI (bloqueados cuando corre).
-- Memoria: múltiples unidades; capacidad por unidad (p.ej. 256 MB), estrategias de asignación y reemplazo de página por unidad.
-- Quantum: visible y aplicable en RR/PriorityRR.
+- **Hardware:**
+    - CPUs: 1 a 8 núcleos.
+    - Hilos por CPU: 1 a 8 hilos (Hyper-threading).
+    - Memoria: 1 a 8 bancos independientes; capacidad configurable (64MB - 4096MB).
+    - Almacenamiento: Tipo de dispositivo de Swap (HDD, SSD, NVMe, Tape) que afecta la latencia de E/S.
+    - TLB: Activación/Desactivación del Translation Lookaside Buffer.
+- **Software:**
+    - Algoritmos de Planificación: FCFS, SJF, SRTF, RR, Priority, PriorityRR.
+    - Quantum: Configurable para algoritmos Round Robin.
+    - Gestión de Memoria: First Fit, Best Fit, Worst Fit.
+    - Paginación: FIFO, LRU, Optimal.
+
+## Reportes y Salida
+- **PDF Automático:** Al finalizar la simulación ("Finalizar Programa"), se genera un reporte PDF (`reporte_simulacion.pdf`) con métricas detalladas de rendimiento, uso de memoria y estadísticas de procesos.
+- **Consola:** Registro en tiempo real de eventos y comandos manuales.
 
 ## Compatibilidad y Estabilidad
 - El sistema evita retener CPUs con procesos en WAITING: se libera la CPU al entrar SYSCALL/IO/PAGE_FAULT.
 - La compactación preserva siempre el bloque del SO al inicio y no reduce su tamaño.
 - Tail de flujo entre capas recorta eventos a últimos 10.
+
 
 ## Próximos Ajustes Sugeridos
 - Hacer configurables: base SO, per-proceso SO, tamaño de página, factor de memoria virtual.

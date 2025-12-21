@@ -1,5 +1,6 @@
 import random
 import hashlib
+import datetime
 from typing import Dict, List, Optional
 from types import SimpleNamespace
 
@@ -24,23 +25,6 @@ from ..os_core.scheduler import (
 )
 
 
-def _deterministic_probability(pid: int, tick: int, salt: str) -> float:
-    key = f"{pid}-{tick}-{salt}"
-    h = hashlib.sha256(key.encode()).hexdigest()
-    x = int(h[:8], 16)
-    return x / 0xFFFFFFFF
-
-
-def _deterministic_duration(pid: int, salt: str, minimum: int, maximum: int) -> int:
-    minimum = max(1, minimum)
-    maximum = max(minimum, maximum)
-    key = f"{pid}-{salt}"
-    h = hashlib.sha256(key.encode()).hexdigest()
-    x = int(h[:8], 16)
-    span = maximum - minimum + 1
-    return minimum + (x % span)
-
-
 class SimulationEngine:
     def __init__(
         self,
@@ -53,10 +37,27 @@ class SimulationEngine:
         memory_unit_capacity_mb: int = 1024,  # 1 GB por defecto
         allocation_algorithm: str = "first",
         paging_algorithm: str = "FIFO",
+        tlb_enabled: bool = True,
+        page_table_type: str = "SingleLevel",
+        storage_type: str = "HDD"
     ) -> None:
         # Limitar unidades de memoria: mínimo 1, máximo 8
         self.num_memory_units = max(1, min(8, int(num_memory_units)))
         self.memory_unit_capacity_mb = max(1, int(memory_unit_capacity_mb))
+        
+        self.tlb_enabled = tlb_enabled
+        self.page_table_type = page_table_type
+        self.storage_type = storage_type
+        
+        # Tiempos de acceso simulados (ticks) por tipo de almacenamiento
+        self.storage_access_times = {
+            "HDD": 15,      # Lento
+            "SSD": 5,       # Rápido
+            "NVMe": 2,      # Muy rápido
+            "Tape": 50      # Extremadamente lento
+        }
+        
+        self.start_time = datetime.datetime.now()
 
         def strategy_for(name: str):
             if name == "best":
@@ -84,7 +85,14 @@ class SimulationEngine:
             else:
                 mu.system_reserved_mb = 0
                 mu.manager = MemoryManager(mu.total_mb, mu.alloc_alg, strategy_for(mu.alloc_alg), system_reserved_mb=0)
-            mu.paged_manager = PagedMemoryManager(mu.total_mb, page_size_mb=4, replacement_alg=mu.page_alg)
+            
+            mu.paged_manager = PagedMemoryManager(
+                total_mb=mu.total_mb, 
+                page_size_mb=4, 
+                replacement_alg=mu.page_alg,
+                tlb_enabled=self.tlb_enabled, 
+                page_table_type=self.page_table_type
+            )
             self.memory_units.append(mu)
 
         self.managers: Dict[str, MemoryManager] = {"first": self.memory_units[0].manager}
@@ -94,7 +102,7 @@ class SimulationEngine:
         self.metrics = SimulationMetrics()
         self.tick_count = 0
         self.max_process_duration = 50
-        self.terminated_cleanup_delay = 10
+        self.terminated_cleanup_delay = 1 # Cleanup almost immediately to avoid UI lingering
         self.new_state_delay = 2
 
         self.architecture_name = "Modular"
@@ -194,91 +202,55 @@ class SimulationEngine:
         return 2
 
     def default_page_fault_duration(self) -> int:
-        return 5
+        # Retorna el tiempo de acceso según el tipo de almacenamiento configurado
+        return self.storage_access_times.get(self.storage_type, 15)
 
-    def manual_create_process(self, size_mb: int, duration: int, priority: Optional[int] = None) -> Process:
+    def _create_process_internal(self, size_mb: int, duration: int, priority: Optional[int] = None) -> Process:
         # Corrección lógica para asegurar que la suma sea exacta
-        # En lugar de calcular los 3 por porcentaje, calcula 2 y el último es la resta.
         code_mb = int(size_mb * 0.50)  # Ejemplo 50%
         data_mb = int(size_mb * 0.30)  # Ejemplo 30%
-        # El resto se asigna a memoria extra para que cuadre perfecto
         extra_mb = int(size_mb - code_mb - data_mb)
         
-        # Asegurar que size_mb sea exactamente la suma de los segmentos
         calculated_size = code_mb + data_mb + extra_mb
         
-        # Determinar si el proceso tendrá error (0.5% de probabilidad)
         has_error = random.random() < 0.005
         
         process = Process(
             name=f"P{len(self.processes) + 1}",
-            size_mb=calculated_size,  # Usar el tamaño calculado para garantizar consistencia
+            size_mb=calculated_size,
             code_size_mb=code_mb,
             data_size_mb=data_mb,
             extra_memory_mb=extra_mb,
             has_error=has_error,
-            exit_code=0,  # Se actualizará si hay error
+            exit_code=0,
             cpu_usage=random.uniform(5, 40),
             duration_ticks=duration,
             remaining_ticks=duration,
         )
         process.arrival_tick = self.tick_count
         process.state = "NEW"
-        # Asegurar consistencia: size_mb debe ser igual a la suma de segmentos
         if not process.validate_segment_consistency():
             process.size_mb = process.get_total_segment_size()
-        # Asignar dirección física de memoria (simulada)
-        # Dirección base 0x400000 + (PID * 0x10000) para cada proceso único
         process.memory_start_address = 0x400000 + (process.pid * 0x10000)
         self._configure_process_behavior(process)
-        process.priority = max(0, min(9, priority)) if priority is not None else self._assign_priority(process)
+        
+        if priority is not None:
+            process.priority = max(0, min(9, priority))
+        else:
+            process.priority = self._assign_priority(process)
+            
         self.processes[process.pid] = process
         self.metrics.total_processes += 1
         self._try_allocate_in_any_unit(process)
         return process
+
+    def manual_create_process(self, size_mb: int, duration: int, priority: Optional[int] = None) -> Process:
+        return self._create_process_internal(size_mb, duration, priority)
 
     def create_process(self) -> Process:
         size = random.randint(4, 64)
         duration = random.randint(20, self.max_process_duration)
-        # Corrección lógica para asegurar que la suma sea exacta
-        # En lugar de calcular los 3 por porcentaje, calcula 2 y el último es la resta.
-        code_mb = int(size/2)  # Ejemplo 50%
-        data_mb = int(size * (3/10))  # Ejemplo 30%
-        # El resto se asigna a memoria extra para que cuadre perfecto
-        extra_mb = int(size - (code_mb + data_mb))
-        
-        # Asegurar que size_mb sea exactamente la suma de los segmentos
-        calculated_size = int(code_mb + data_mb + extra_mb)
-        
-        # Determinar si el proceso tendrá error (0.5% de probabilidad)
-        has_error = random.random() < 0.005
-        
-        process = Process(
-            name=f"P{len(self.processes) + 1}",
-            size_mb=calculated_size,  # Usar el tamaño calculado para garantizar consistencia
-            code_size_mb=code_mb,
-            data_size_mb=data_mb,
-            extra_memory_mb=extra_mb,
-            has_error=has_error,
-            exit_code=0,  # Se actualizará si hay error
-            cpu_usage=random.uniform(5, 40),
-            duration_ticks=duration,
-            remaining_ticks=duration,
-        )
-        process.arrival_tick = self.tick_count
-        process.state = "NEW"
-        # Asegurar consistencia: size_mb debe ser igual a la suma de segmentos
-        if not process.validate_segment_consistency():
-            process.size_mb = process.get_total_segment_size()
-        # Asignar dirección física de memoria (simulada)
-        # Dirección base 0x400000 + (PID * 0x10000) para cada proceso único
-        process.memory_start_address = 0x400000 + (process.pid * 0x10000)
-        self._configure_process_behavior(process)
-        process.priority = self._assign_priority(process)
-        self.processes[process.pid] = process
-        self.metrics.total_processes += 1
-        self._try_allocate_in_any_unit(process)
-        return process
+        return self._create_process_internal(size, duration)
 
     def _try_allocate_in_any_unit(self, process: Process) -> None:
         allocated = False
@@ -304,17 +276,12 @@ class SimulationEngine:
                 unit.paged_manager.release(process)
 
     def release_process(self, process: Process) -> None:
-        if process.memory_unit_id is not None and 0 <= process.memory_unit_id < len(self.memory_units):
-            unit = self.memory_units[process.memory_unit_id]
+        # Siempre intentar liberar de todas las unidades para asegurar consistencia
+        for unit in self.memory_units:
             unit.manager.release(process)
             unit.paged_manager.release(process)
-        else:
-            for unit in self.memory_units:
-                unit.manager.release(process)
-                unit.paged_manager.release(process)
         process.state = "TERMINATED"
         process.finish_tick = self.tick_count
-        # Asegurar que procesos sin error tengan exit_code = 0
         if not process.has_error and process.exit_code == 0:
             process.exit_code = 0
         self.metrics.record_process_completion(process, self.tick_count)
@@ -324,9 +291,7 @@ class SimulationEngine:
     def update_processes(self) -> None:
         self._cleanup_terminated_processes()
         self._move_new_processes_to_ready()
-        # Actualizar memoria reservada del sistema según procesos activos
         self._update_system_reserved_memory()
-        # Actualizar todos los procesos activos (para actualizar PC y registros)
         for process in self.active_processes():
             process.tick()
         self._update_waiting_processes()
@@ -352,12 +317,26 @@ class SimulationEngine:
 
         for cpu in self.cpus:
             process = cpu.process
-            if process and random.random() < 0.1:
+            if process and process.state == "RUNNING" and random.random() < 0.2: # Aumentado prob de acceso memoria
                 max_page = max(0, (process.size_mb // 4) - 1)
                 page_number = random.randint(0, max_page) if max_page > 0 else 0
                 if process.memory_unit_id is not None and 0 <= process.memory_unit_id < len(self.memory_units):
                     unit = self.memory_units[process.memory_unit_id]
-                    unit.paged_manager.access_page(process, page_number, self.tick_count)
+                    # Access Page returns True, False (Segment Fault) or "PAGE_FAULT"
+                    result = unit.paged_manager.access_page(process, page_number, self.tick_count)
+                    
+                    if result == "PAGE_FAULT":
+                        # SIMULAR PAGE FAULT COMO INTERRUPCION DE SOFTWARE
+                        duration = self.default_page_fault_duration()
+                        self.interrupt_controller.raise_interrupt(
+                            Interrupt(InterruptType.PAGE_FAULT, source="mmu", pid=process.pid, payload={"page_fault_duration": duration})
+                        )
+                        process.state = "WAITING"
+                        process.interrupt_type = "PAGE_FAULT"
+                        process.io_remaining_ticks = duration
+                        process.pending_fault_page = page_number
+                        cpu.release()
+                        self.log_interrupt(f"PAGE FAULT (Software Interrupt) - Process {process.name}, Page {page_number}")
                     if self.architecture == "Modular" and random.random() < 0.05: # Solo 5% para no saturar
                         self.log_layer_flow("Paginación", "Memoria Core", f"access:{process.pid}")
 
@@ -388,12 +367,25 @@ class SimulationEngine:
             if process.io_remaining_ticks > 0:
                 process.io_remaining_ticks -= 1
             if process.io_remaining_ticks <= 0:
+                # Si terminamos de esperar por un Page Fault, tenemos que resolverlo (cargar página)
+                if process.interrupt_type == "PAGE_FAULT" and process.pending_fault_page is not None:
+                     if process.memory_unit_id is not None and 0 <= process.memory_unit_id < len(self.memory_units):
+                         unit = self.memory_units[process.memory_unit_id]
+                         success = unit.paged_manager.resolve_fault(process.pid, process.pending_fault_page, self.tick_count)
+                         if success:
+                             self.log_interrupt(f"Page Fault Resolved: Process {process.name} Page {process.pending_fault_page} Loaded.")
+                         else:
+                             self.log_interrupt(f"Page Fault Failed: No memory for Process {process.name}.")
+                             # Podríamos terminar el proceso si falla, pero reintentaremos luego
+                             
+                     process.pending_fault_page = None
+
                 process.state = "READY"
                 process.io_remaining_ticks = 0
                 process.interrupt_type = None
                 idx = self._least_loaded_scheduler_index()
                 self.schedulers[idx].add_process(process)
-                self.log_interrupt(f"Process {process.name} finalizó I/O y vuelve a READY.")
+                self.log_interrupt(f"Process {process.name} finalizó espera y vuelve a READY.")
 
     def _run_cpus(self) -> None:
         for cpu in self.cpus:
@@ -402,17 +394,13 @@ class SimulationEngine:
                 continue
 
             if process.state == "TERMINATED":
+                self.release_process(process)
                 cpu.release()
                 continue
 
-            # Verificar si el proceso con error debe terminar prematuramente
             if process.has_error and process.state == "RUNNING":
-                # El proceso debe terminar en un momento aleatorio durante su ejecución
-                # Usar una probabilidad determinística basada en PID y tick para consistencia
-                error_prob = _deterministic_probability(process.pid, self.tick_count, "error")
-                # El proceso debe haber ejecutado al menos un 10% de su duración antes de poder fallar
+                error_prob = self._deterministic_probability(process.pid, self.tick_count, "error")
                 progress = 1.0 - (process.remaining_ticks / max(1, process.duration_ticks))
-                # Probabilidad de fallo: 10% por tick después del 10% de progreso
                 if progress >= 0.1 and error_prob < 0.10:
                     process.exit_code = -1
                     process.state = "TERMINATED"
@@ -475,55 +463,37 @@ class SimulationEngine:
         pid = process.pid
         if process.state != "RUNNING":
             return False
-        sys_prob = _deterministic_probability(pid, self.tick_count, "syscall")
+        sys_prob = self._deterministic_probability(pid, self.tick_count, "syscall")
         if sys_prob < process.syscall_probability:
-            duration = _deterministic_duration(pid, "syscall", 1, self.default_syscall_duration())
+            duration = self._deterministic_duration(pid, "syscall", 1, self.default_syscall_duration())
             self.interrupt_controller.raise_interrupt(
                 Interrupt(InterruptType.SYSCALL, source="process", pid=pid, payload={"syscall_duration": duration})
             )
             process.state = "WAITING"
             process.interrupt_type = "SYSCALL"
             process.io_remaining_ticks = duration
-            # Liberar CPU mientras el proceso espera
             if process.cpu_id is not None and 0 <= process.cpu_id < len(self.cpus):
                 self.cpus[process.cpu_id].release()
             self.log_interrupt(f"Process {process.name} ejecuta SYSCALL por {duration} ticks.")
             if self.architecture == "Modular":
                 self.log_layer_flow("Proceso Core", "Núcleo Base", f"syscall:{pid}")
             return True
-        io_prob = _deterministic_probability(pid, self.tick_count, "io")
+        io_prob = self._deterministic_probability(pid, self.tick_count, "io")
         if io_prob < process.io_probability:
-            duration = _deterministic_duration(pid, "io", 2, self.default_io_duration() + 3)
+            duration = self._deterministic_duration(pid, "io", 2, self.default_io_duration() + 3)
             self.interrupt_controller.raise_interrupt(
                 Interrupt(InterruptType.IO, source="process", pid=pid, payload={"io_duration": duration})
             )
             process.state = "WAITING"
             process.interrupt_type = "IO"
             process.io_remaining_ticks = duration
-            # Liberar CPU mientras el proceso espera
             if process.cpu_id is not None and 0 <= process.cpu_id < len(self.cpus):
                 self.cpus[process.cpu_id].release()
             self.log_interrupt(f"Process {process.name} entra a I/O por {duration} ticks.")
             if self.architecture == "Modular":
                 self.log_layer_flow("Proceso Core", "Núcleo Base", f"io_req:{pid}")
             return True
-        pf_prob = _deterministic_probability(pid, self.tick_count, "pagefault")
-        if pf_prob < max(0.02, process.hardware_interrupt_probability):
-            duration = _deterministic_duration(pid, "pf", 2, self.default_page_fault_duration() + 2)
-            self.interrupt_controller.raise_interrupt(
-                Interrupt(InterruptType.PAGE_FAULT, source="mmu", pid=pid, payload={"page_fault_duration": duration})
-            )
-            process.state = "WAITING"
-            process.interrupt_type = "PAGE_FAULT"
-            process.io_remaining_ticks = duration
-            # Liberar CPU mientras el proceso espera
-            if process.cpu_id is not None and 0 <= process.cpu_id < len(self.cpus):
-                self.cpus[process.cpu_id].release()
-            self.log_interrupt(f"Process {process.name} sufre PAGE FAULT ({duration} ticks).")
-            if self.architecture == "Modular":
-                self.log_layer_flow("Paginación", "Memoria Core", f"pf:{pid}")
-                self.log_layer_flow("Memoria Core", "Núcleo Base", f"pf_trap:{pid}")
-            return True
+        # Eliminado handling random de PAGE_FAULT aquí, ahora es "real" en tick loop por acceso a memoria
         return False
 
     def _maybe_raise_global_interrupts(self) -> None:
@@ -588,7 +558,13 @@ class SimulationEngine:
         if 0 <= index < len(self.memory_units):
             unit = self.memory_units[index]
             unit.page_alg = name
-            unit.paged_manager = PagedMemoryManager(unit.total_mb, page_size_mb=4, replacement_alg=unit.page_alg)
+            unit.paged_manager = PagedMemoryManager(
+                unit.total_mb, 
+                page_size_mb=4, 
+                replacement_alg=unit.page_alg,
+                tlb_enabled=self.tlb_enabled, 
+                page_table_type=self.page_table_type
+            )
             self.log_interrupt(f"Unidad de memoria {index}: algoritmo de paginación -> {name}.")
 
     def memory_unit_summaries(self) -> List[Dict[str, object]]:
@@ -624,7 +600,7 @@ class SimulationEngine:
         avg_mem_util = 0.0
         if self.memory_units:
             avg_mem_util = sum(u.paged_manager.memory_utilization() for u in self.memory_units) / len(self.memory_units)
-        virtual_extension_factor = 1.5  # Asunción de expansión de memoria virtual
+        virtual_extension_factor = 1.5 
         return {
             "total_mb": total_mb,
             "used_mb": used_mb,
@@ -672,23 +648,20 @@ class SimulationEngine:
         self._layer_flow.clear()
         self.metrics = SimulationMetrics()
         self.tick_count = 0
-        # Re-init interrupts and architecture
         self.interrupt_log.clear()
         self.interrupt_controller = InterruptController()
         self.arch = ArchitectureFactory.create(self.architecture_name, self.interrupt_controller)
-        # Rebuild CPUs preserving count and thread capacity
         count = len(self.cpus) if self.cpus else 1
         default_threads = self.cpus[0].thread_capacity if self.cpus else 2
         self.cpus = [CPU(id=i, thread_capacity=default_threads) for i in range(count)]
         self.schedulers = [self._create_scheduler(self.scheduling_alg_name) for _ in self.cpus]
         self.scheduler_names = [self.scheduling_alg_name for _ in self.cpus]
-        # Rebuild memory units preserving algorithms
+        
         new_units: List[SimpleNamespace] = []
         for i in range(self.num_memory_units):
             alloc_alg = self.memory_units[i].manager.algorithm if i < len(self.memory_units) else "first"
             page_alg = self.memory_units[i].paged_manager.replacement_alg if i < len(self.memory_units) else "FIFO"
-            base_sys_mb = 64  # Núcleo + estructuras base
-            # Reservar memoria del sistema SOLO en la primera unidad
+            base_sys_mb = 64
             if i == 0:
                 system_reserved = min(base_sys_mb, self.memory_unit_capacity_mb)
             else:
@@ -699,7 +672,13 @@ class SimulationEngine:
                 FirstFitStrategy() if alloc_alg == "first" else BestFitStrategy() if alloc_alg == "best" else WorstFitStrategy(),
                 system_reserved_mb=system_reserved
             )
-            pm = PagedMemoryManager(self.memory_unit_capacity_mb, page_size_mb=4, replacement_alg=page_alg)
+            pm = PagedMemoryManager(
+                self.memory_unit_capacity_mb, 
+                page_size_mb=4, 
+                replacement_alg=page_alg,
+                tlb_enabled=self.tlb_enabled, 
+                page_table_type=self.page_table_type
+            )
             mu = SimpleNamespace(
                 id=i,
                 total_mb=self.memory_unit_capacity_mb,
@@ -739,22 +718,28 @@ class SimulationEngine:
     def get_module_status(self) -> Dict:
         return {"ipc_enabled": False, "modules_loaded": len(self.dynamic_modules)}
 
-    # Traducción de dirección virtual a frame físico (memoria paginada)
     def translate_virtual_address(self, pid: int, offset_mb: int) -> Optional[str]:
         if pid not in self.processes:
             return None
         if offset_mb < 0:
             return None
-        page_size = 4  # Asunción consistente con paged_manager
+        page_size = 4 
         page_number = offset_mb // page_size
-        # Buscar en cualquier unidad (simplificación: primera que contenga el proceso en tabla)
+        
         for unit in self.memory_units:
-            table = unit.paged_manager.get_page_table(pid)
+            # Use MMU translate to check result (non-intrusive, so usage stats don't increment?) 
+            # Translate modifies TLB, so it's intrusive.
+            # We want visual translation.
+            # Let's inspect Page Table directly via MMU.
+            pm = unit.paged_manager
+            table = pm.mmu.get_process_table(pid)
             if not table:
                 continue
-            if page_number >= len(table):
-                return "SWAPPED"  # Dirección virtual fuera de páginas asignadas
-            entry = table[page_number]
+            
+            entry = table.get_entry(page_number)
+            if not entry:
+                return "SWAPPED"
+            
             if entry.valid and entry.frame_number is not None:
                 return f"FRAME_{entry.frame_number}"
             return "SWAPPED"
@@ -762,10 +747,9 @@ class SimulationEngine:
 
     def _update_system_reserved_memory(self):
         active_count = len([p for p in self.processes.values() if p.state != "TERMINATED"])
-        base_sys_mb = 64  # Núcleo + estructuras base
+        base_sys_mb = 64 
         per_proc_mb = 2
         required = base_sys_mb + active_count * per_proc_mb
-        # Expandir SOLO en la primera unidad
         if self.memory_units:
             unit = self.memory_units[0]
             if unit.manager.expand_system_reserved(required):
@@ -787,3 +771,20 @@ class SimulationEngine:
         del self.dynamic_modules[module_id]
         self.log_layer_flow("UI", "Núcleo Base", f"unload:{module_id}")
         return True
+
+    @staticmethod
+    def _deterministic_probability(pid: int, tick: int, salt: str) -> float:
+        key = f"{pid}-{tick}-{salt}"
+        h = hashlib.sha256(key.encode()).hexdigest()
+        x = int(h[:8], 16)
+        return x / 0xFFFFFFFF
+
+    @staticmethod
+    def _deterministic_duration(pid: int, salt: str, minimum: int, maximum: int) -> int:
+        minimum = max(1, minimum)
+        maximum = max(minimum, maximum)
+        key = f"{pid}-{salt}"
+        h = hashlib.sha256(key.encode()).hexdigest()
+        x = int(h[:8], 16)
+        span = maximum - minimum + 1
+        return minimum + (x % span)
