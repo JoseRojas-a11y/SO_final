@@ -122,7 +122,7 @@ class SimulationEngine:
                 "scheduler_mod": {"name": "Módulo de Planificación", "removable": True, "status": "loaded"},
                 "interrupt_handler": {"name": "Manejador de Interrupciones", "removable": True, "status": "loaded"},
             }
-        self._layer_flow: List[str] = []
+        self._layer_flow: List[Dict[str, str]] = []
 
     def _create_scheduler(self, name: str) -> Scheduler:
         normalized = (name or "").strip()
@@ -294,7 +294,8 @@ class SimulationEngine:
         if allocated:
             self.log_interrupt(f"Process {process.name} created (Priority: {process.priority}) - Estado: NEW.")
             if self.architecture == "Modular":
-                self.log_layer_flow("Núcleo Base", "Gestor de Memoria Core", f"alloc:{process.pid}")
+                self.log_layer_flow("Asignación", "Memoria Core", f"alloc:{process.pid}")
+                self.log_layer_flow("Memoria Core", "Núcleo Base", f"alloc_ok:{process.pid}")
         else:
             process.state = "TERMINATED"
             process.finish_tick = self.tick_count
@@ -357,6 +358,8 @@ class SimulationEngine:
                 if process.memory_unit_id is not None and 0 <= process.memory_unit_id < len(self.memory_units):
                     unit = self.memory_units[process.memory_unit_id]
                     unit.paged_manager.access_page(process, page_number, self.tick_count)
+                    if self.architecture == "Modular" and random.random() < 0.05: # Solo 5% para no saturar
+                        self.log_layer_flow("Paginación", "Memoria Core", f"access:{process.pid}")
 
         self.arch.after_tick(self, self.tick_count)
 
@@ -375,7 +378,8 @@ class SimulationEngine:
                     self.schedulers[idx].add_process(process)
                     self.log_interrupt(f"Process {process.name} (PID {process.pid}) movido de NEW a READY.")
                     if self.architecture == "Modular":
-                        self.log_layer_flow("Núcleo Base", "Gestor de Procesos Core", f"ready:{process.pid}")
+                        self.log_layer_flow("Planificador", "Proceso Core", f"ready:{process.pid}")
+                        self.log_layer_flow("Proceso Core", "Núcleo Base", f"sched:{process.pid}")
 
     def _update_waiting_processes(self) -> None:
         for process in self.active_processes():
@@ -459,7 +463,8 @@ class SimulationEngine:
             cpu.assign(next_process)
             self.log_interrupt(f"Process {next_process.name} asignado a CPU {cpu.id} con {cpu.thread_capacity} hilos.")
             if self.architecture == "Modular":
-                self.log_layer_flow("Módulo de Planificación", "Núcleo Base", f"dispatch:{next_process.pid}")
+                self.log_layer_flow("Despachador", "Proceso Core", f"dispatch:{next_process.pid}")
+                self.log_layer_flow("Proceso Core", "Núcleo Base", f"ctx_switch:{next_process.pid}")
 
     def _update_waiting_times(self) -> None:
         for process in self.active_processes():
@@ -484,7 +489,7 @@ class SimulationEngine:
                 self.cpus[process.cpu_id].release()
             self.log_interrupt(f"Process {process.name} ejecuta SYSCALL por {duration} ticks.")
             if self.architecture == "Modular":
-                self.log_layer_flow("Proceso", "Núcleo Base", f"syscall:{pid}")
+                self.log_layer_flow("Proceso Core", "Núcleo Base", f"syscall:{pid}")
             return True
         io_prob = _deterministic_probability(pid, self.tick_count, "io")
         if io_prob < process.io_probability:
@@ -500,7 +505,7 @@ class SimulationEngine:
                 self.cpus[process.cpu_id].release()
             self.log_interrupt(f"Process {process.name} entra a I/O por {duration} ticks.")
             if self.architecture == "Modular":
-                self.log_layer_flow("Proceso", "Manejador de Interrupciones", f"io_req:{pid}")
+                self.log_layer_flow("Proceso Core", "Núcleo Base", f"io_req:{pid}")
             return True
         pf_prob = _deterministic_probability(pid, self.tick_count, "pagefault")
         if pf_prob < max(0.02, process.hardware_interrupt_probability):
@@ -515,6 +520,9 @@ class SimulationEngine:
             if process.cpu_id is not None and 0 <= process.cpu_id < len(self.cpus):
                 self.cpus[process.cpu_id].release()
             self.log_interrupt(f"Process {process.name} sufre PAGE FAULT ({duration} ticks).")
+            if self.architecture == "Modular":
+                self.log_layer_flow("Paginación", "Memoria Core", f"pf:{pid}")
+                self.log_layer_flow("Memoria Core", "Núcleo Base", f"pf_trap:{pid}")
             return True
         return False
 
@@ -661,6 +669,7 @@ class SimulationEngine:
 
     def reset(self) -> None:
         self.processes.clear()
+        self._layer_flow.clear()
         self.metrics = SimulationMetrics()
         self.tick_count = 0
         # Re-init interrupts and architecture
@@ -705,11 +714,24 @@ class SimulationEngine:
         self.managers = {"first": self.memory_units[0].manager}
         self.paged_managers = {"FIFO": self.memory_units[0].paged_manager}
 
-    def layer_flow_events(self) -> List[str]:
+    def layer_flow_events(self) -> List[Dict[str, str]]:
+        """Retorna los eventos de flujo entre capas con información estructurada."""
         return list(self._layer_flow)
+    
+    def layer_flow_events_text(self) -> List[str]:
+        """Retorna los eventos de flujo como texto legible (compatibilidad)."""
+        return [f"[Tick {e.get('tick', '?')}] {e.get('source', '?')} → {e.get('target', '?')} ({e.get('action', '?')})" 
+                for e in self._layer_flow]
 
     def log_layer_flow(self, source: str, target: str, action: str) -> None:
-        self._layer_flow.append(f"[Tick {self.tick_count}] {source} → {target}")
+        """Registra un evento de flujo entre capas con información completa."""
+        event = {
+            "tick": str(self.tick_count),
+            "source": source,
+            "target": target,
+            "action": action
+        }
+        self._layer_flow.append(event)
         # Mantener solo las últimas 10 entradas
         if len(self._layer_flow) > 10:
             self._layer_flow = self._layer_flow[-10:]
@@ -753,7 +775,7 @@ class SimulationEngine:
         if module_id in self.dynamic_modules:
             return False
         self.dynamic_modules[module_id] = {"name": module_name, "removable": removable, "status": "loaded"}
-        self.log_layer_flow("UI", "Kernel", f"load:{module_name}")
+        self.log_layer_flow("UI", "Núcleo Base", f"load:{module_name}")
         return True
 
     def unload_module(self, module_id: str) -> bool:
@@ -763,5 +785,5 @@ class SimulationEngine:
         if not mod.get("removable", True):
             return False
         del self.dynamic_modules[module_id]
-        self.log_layer_flow("UI", "Kernel", f"unload:{module_id}")
+        self.log_layer_flow("UI", "Núcleo Base", f"unload:{module_id}")
         return True

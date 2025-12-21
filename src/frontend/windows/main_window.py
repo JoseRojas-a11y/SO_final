@@ -5,10 +5,12 @@ from PyQt6.QtWidgets import (
     QListWidgetItem
 )
 from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtGui import QColor
 from ...simulation.engine import SimulationEngine
 from ..components.console import ConsoleWidget
 from ..views.processes_view import ProcessesView
 from ..views.memory_view import MemoryView
+from ..views.architecture_view import ArchitectureView
 
 class MainWindow(QMainWindow):
     def __init__(self, engine: SimulationEngine):
@@ -90,6 +92,11 @@ class MainWindow(QMainWindow):
         self.checkbox_memory = QCheckBox("Gestión de Memoria")
         self.checkbox_memory.stateChanged.connect(self.on_navigation_changed)
         nav_layout.addWidget(self.checkbox_memory)
+
+        if engine.architecture == "Modular":
+            self.checkbox_flow = QCheckBox("Flujo entre Capas")
+            self.checkbox_flow.stateChanged.connect(self.on_navigation_changed)
+            nav_layout.addWidget(self.checkbox_flow)
         
         right_layout.addWidget(nav_group)
 
@@ -114,18 +121,34 @@ class MainWindow(QMainWindow):
             self.modules_list = QListWidget()
             self.modules_list.setMaximumHeight(120)
             self.modules_list.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
-            arch_control_layout.addWidget(QLabel("Módulos Cargados:"))
+            # arch_control_layout.addWidget(QLabel("Módulos del Sistema")) # Eliminado por duplicidad
             arch_control_layout.addWidget(self.modules_list)
             
             right_layout.addWidget(arch_control_group)
+            
+            # Visualización gráfica de arquitectura con flujos (con scroll)
+            self.architecture_view = ArchitectureView(engine=self.engine)
+            # Crear ScrollArea para permitir desplazamiento
+            self.scroll_flow = QScrollArea()
+            self.scroll_flow.setWidget(self.architecture_view)
+            self.scroll_flow.setWidgetResizable(True)
+            # Scrollbars solo cuando sean necesarios
+            self.scroll_flow.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+            self.scroll_flow.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+            self.scroll_flow.setFrameShape(QFrame.Shape.NoFrame)
+            self.scroll_flow.setStyleSheet("QScrollArea { border: 1px solid #ccc; background-color: #f5f5f5; }")
+            self.scroll_flow.setVisible(False)
+            
+            # Nota: La vista de arquitectura ahora se muestra en el panel principal al seleccionar "Flujo entre Capas"
             
             layer_flow_group = QGroupBox("📡 Flujo entre Capas (Modular)")
             layer_flow_layout = QVBoxLayout(layer_flow_group)
             layer_flow_layout.setSpacing(2)
             layer_flow_layout.setContentsMargins(4, 4, 4, 4)
             self.layer_flow_list = QListWidget()
-            self.layer_flow_list.setMaximumHeight(90)
-            layer_flow_layout.addWidget(QLabel("Últimas interacciones:"))
+            self.layer_flow_list.setMaximumHeight(120)
+            self.layer_flow_list.setWordWrap(True)
+            layer_flow_layout.addWidget(QLabel("Últimas interacciones (máx. 10):"))
             layer_flow_layout.addWidget(self.layer_flow_list)
             right_layout.addWidget(layer_flow_group)
         elif engine.architecture == "Microkernel":
@@ -198,24 +221,25 @@ class MainWindow(QMainWindow):
 
     def on_navigation_changed(self):
         """Maneja los cambios en la selección de opciones de navegación"""
-        processes_checked = self.checkbox_processes.isChecked()
-        memory_checked = self.checkbox_memory.isChecked()
-        
-        # Determinar qué se seleccionó primero (solo si no hay ninguno seleccionado previamente)
-        if processes_checked and not self.processes_selected:
-            if not self.memory_selected:
-                self.first_selected = 'processes'
-        elif memory_checked and not self.memory_selected:
-            if not self.processes_selected:
-                self.first_selected = 'memory'
-        
-        # Si se deseleccionan ambos, resetear first_selected
-        if not processes_checked and not memory_checked:
-            self.first_selected = None
-        
-        # Actualizar estado
-        self.processes_selected = processes_checked
-        self.memory_selected = memory_checked
+        if not hasattr(self, 'selection_order'):
+            self.selection_order = []
+
+        # Map checkboxes to IDs
+        options = {
+            'processes': self.checkbox_processes,
+            'memory': self.checkbox_memory
+        }
+        if hasattr(self, 'checkbox_flow'):
+            options['flow'] = self.checkbox_flow
+
+        # Update selection order
+        for key, checkbox in options.items():
+            if checkbox.isChecked():
+                if key not in self.selection_order:
+                    self.selection_order.append(key)
+            else:
+                if key in self.selection_order:
+                    self.selection_order.remove(key)
         
         # Limpiar layout de contenido
         while self.content_layout.count():
@@ -225,41 +249,38 @@ class MainWindow(QMainWindow):
                 if aux:
                     aux.setParent(None)
             
-        # Ocultar todos los scrolls, página vacía y separador
+        # Ocultar todos los scrolls y página vacía
         self.scroll_processes.setVisible(False)
         self.scroll_memory.setVisible(False)
+        if hasattr(self, 'scroll_flow'):
+            self.scroll_flow.setVisible(False)
         self.page_empty.setVisible(False)
-        self.divider.setVisible(False)
         
-        # Lógica de visualización
-        if not processes_checked and not memory_checked:
-            # Ninguna seleccionada: mostrar página vacía
+        if not self.selection_order:
             self.content_layout.addWidget(self.page_empty)
             self.page_empty.setVisible(True)
-        elif processes_checked and not memory_checked:
-            # Solo procesos
-            self.content_layout.addWidget(self.scroll_processes)
-            self.scroll_processes.setVisible(True)
-        elif memory_checked and not processes_checked:
-            # Solo memoria
-            self.content_layout.addWidget(self.scroll_memory)
-            self.scroll_memory.setVisible(True)
-        else:
-            # Ambos seleccionados: dividir pantalla según orden con separador
-            if self.first_selected == 'processes':
-                # Procesos arriba, memoria abajo
+            return
+
+        # Add widgets in order
+        for i, key in enumerate(self.selection_order):
+            # Add divider if not first
+            if i > 0:
+                div = QFrame()
+                div.setFrameShape(QFrame.Shape.HLine)
+                div.setFrameShadow(QFrame.Shadow.Sunken)
+                div.setStyleSheet("background-color: white; border: 2px solid white;")
+                div.setFixedHeight(3)
+                self.content_layout.addWidget(div)
+
+            if key == 'processes':
                 self.content_layout.addWidget(self.scroll_processes, 1)
-                self.content_layout.addWidget(self.divider)
+                self.scroll_processes.setVisible(True)
+            elif key == 'memory':
                 self.content_layout.addWidget(self.scroll_memory, 1)
-            else:
-                # Memoria arriba, procesos abajo
-                self.content_layout.addWidget(self.scroll_memory, 1)
-                self.content_layout.addWidget(self.divider)
-                self.content_layout.addWidget(self.scroll_processes, 1)
-            
-            self.scroll_processes.setVisible(True)
-            self.scroll_memory.setVisible(True)
-            self.divider.setVisible(True)
+                self.scroll_memory.setVisible(True)
+            elif key == 'flow':
+                self.content_layout.addWidget(self.scroll_flow, 1)
+                self.scroll_flow.setVisible(True)
 
     def on_tick(self):
         self.engine.tick()
@@ -276,22 +297,81 @@ class MainWindow(QMainWindow):
         if self.layer_flow_list.count() != len(events):
             self.layer_flow_list.clear()
             for ev in events:
-                self.layer_flow_list.addItem(ev)
+                # Formato mejorado con colores e información detallada
+                tick = ev.get('tick', '?')
+                source = ev.get('source', '?')
+                target = ev.get('target', '?')
+                action = ev.get('action', '?')
+                
+                # Parsear acción para mostrar información relevante
+                action_display = action
+                if ':' in action:
+                    action_type, action_data = action.split(':', 1)
+                    if action_type == 'alloc':
+                        action_display = f"💾 Asignar memoria PID:{action_data}"
+                    elif action_type == 'dispatch':
+                        action_display = f"▶️ Despachar proceso PID:{action_data}"
+                    elif action_type == 'ready':
+                        action_display = f"✅ Marcar listo PID:{action_data}"
+                    elif action_type == 'syscall':
+                        action_display = f"🔧 Syscall PID:{action_data}"
+                    elif action_type == 'io_req':
+                        action_display = f"📥 Solicitud I/O PID:{action_data}"
+                    elif action_type == 'load':
+                        action_display = f"⬆️ Cargar módulo: {action_data}"
+                    elif action_type == 'unload':
+                        action_display = f"⬇️ Descargar módulo: {action_data}"
+                
+                item_text = f"[Tick {tick}] {source} → {target}\n   {action_display}"
+                item = QListWidgetItem(item_text)
+                
+                # Color según el tipo de acción
+                if 'alloc' in action or 'memory' in action.lower():
+                    item.setBackground(QColor(220, 237, 255))  # Azul claro para memoria
+                elif 'dispatch' in action or 'ready' in action:
+                    item.setBackground(QColor(220, 255, 220))  # Verde claro para procesos
+                elif 'io' in action.lower() or 'syscall' in action.lower():
+                    item.setBackground(QColor(255, 247, 220))  # Amarillo claro para I/O
+                elif 'load' in action or 'unload' in action:
+                    item.setBackground(QColor(255, 220, 237))  # Rosa claro para módulos
+                else:
+                    item.setBackground(QColor(245, 245, 245))  # Gris claro por defecto
+                
+                self.layer_flow_list.addItem(item)
             self.layer_flow_list.scrollToBottom()
         
     def update_architecture_view(self):
-        """Actualiza la información de la arquitectura (sin visualización gráfica)."""
+        """Actualiza la información de la arquitectura incluyendo visualización gráfica."""
         # Actualizar lista de módulos si es arquitectura Modular
         if hasattr(self, 'modules_list') and self.engine.architecture == "Modular":
             self.modules_list.clear()
-            for module_id, module in self.engine.dynamic_modules.items():
-                removable = "⚡" if module.get("removable", False) else "🔒"
-                status_icon = "✓" if module.get("status") == "loaded" else "✗"
-                item = QListWidgetItem(f"{status_icon} {removable} {module.get('name', module_id)}")
-                item.setData(Qt.ItemDataRole.UserRole, module_id)
+            
+            # Estructura jerárquica solicitada
+            modules_structure = [
+                ("Núcleo Base", "🔒", []),
+                ("Procesos Core", "🔒", ["Planificador", "Despachador"]),
+                ("Memoria Core", "🔒", ["Asignación", "Paginación"])
+            ]
+            
+            for name, icon, submodules in modules_structure:
+                # Módulo principal
+                item = QListWidgetItem(f"{icon} {name}")
                 self.modules_list.addItem(item)
+                
+                # Submódulos
+                for sub in submodules:
+                    sub_item = QListWidgetItem(f"    • {sub}")
+                    self.modules_list.addItem(sub_item)
         
-        # Arquitectura Microkernel eliminada en modo Modular-only
+        # Actualizar vista gráfica de arquitectura
+        if hasattr(self, 'architecture_view') and self.engine.architecture == "Modular":
+            flow_events = self.engine.layer_flow_events()
+            self.architecture_view.update_architecture(
+                architecture="Modular",
+                kernel_mode="modular",
+                dynamic_modules=self.engine.dynamic_modules,
+                flow_events=flow_events
+            )
         
         # Actualizar estado de arquitectura
         if hasattr(self, 'arch_status_label'):
@@ -309,12 +389,8 @@ class MainWindow(QMainWindow):
         if arch == "Modular":
             text = "<b>📊 Estado Modular</b><br>"
             text += f"• Núcleo base: <b>ACTIVO</b><br>"
-            text += f"• Módulos totales: <b>{len(self.engine.dynamic_modules)}</b><br>"
-            core_count = sum(1 for m in self.engine.dynamic_modules.values() if not m.get('removable', True))
-            optional_count = len(self.engine.dynamic_modules) - core_count
-            text += f"• Módulos core: <b>{core_count}</b> (no removibles)<br>"
-            text += f"• Módulos opcionales: <b>{optional_count}</b> (removibles)<br>"
-            text += f"• Gestión dinámica: <b>ACTIVA</b>"
+            text += f"• Módulos totales: <b>3</b><br>"
+            text += f"• Submódulos totales: <b>4</b>"
         else:
             # Fallback a texto modular
             text = "<b>📊 Estado Modular</b><br>"
