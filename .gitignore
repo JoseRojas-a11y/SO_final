@@ -41,3 +41,6 @@ venv/
 src/__pycache__/
 src/frontend/__pycache__/
 src/simulation/__pycache__/
+
+# Reports
+*.pdf
