@@ -124,7 +124,10 @@ class MemoryView(QWidget):
     def _init_ram_bars(self):
         # Clear existing
         for i in reversed(range(self.bars_layout.count())): 
-            self.bars_layout.itemAt(i).widget().setParent(None)
+            item = self.bars_layout.itemAt(i)
+            if item is not None: 
+                if item.widget() is not None:
+                    item.widget().deleteLater() # type: ignore
         
         self.unit_bars = {}
         self.unit_labels = {}

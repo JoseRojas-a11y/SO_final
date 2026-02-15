@@ -1,11 +1,15 @@
+"""
+Main Window - Orquestador principal de la interfaz.
+Principio SRP: Coordina los componentes pero delega la lógica a controladores y paneles.
+Principio DIP: Depende de abstracciones (controladores y paneles), no de implementaciones concretas.
+"""
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QLabel, QFrame, QGroupBox, QDialog, QPushButton, QSpinBox, QFormLayout,
-    QListWidget, QGridLayout, QCheckBox, QScrollArea, QLayoutItem, QAbstractItemView,
-    QListWidgetItem, QMessageBox
+    QGroupBox, QDialog, QPushButton, QSpinBox, QFormLayout,
+    QMessageBox, QCheckBox
 )
-from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QColor
+from PyQt6.QtCore import QTimer
+
 from ...simulation.engine import SimulationEngine
 from ...simulation.reporter import SimulationReporter
 from ..components.console import ConsoleWidget
@@ -13,482 +17,270 @@ from ..views.processes_view import ProcessesView
 from ..views.memory_view import MemoryView
 from ..views.architecture_view import ArchitectureView
 
+# Importar controladores
+from .controllers.navigation_controller import NavigationController
+from .controllers.simulation_controller import SimulationController
+
+# Importar paneles
+from .panels.architecture_panel import (
+    ArchitectureStatusPanel,
+    ModulesPanel,
+    ExternalModulesPanel,
+    LayerFlowPanel
+)
+from .panels.control_panel import SimulationControlPanel, FinishButton
+from .panels.content_panel import ContentPanel, EmptyPage, ScrollAreaFactory
+
+
 class MainWindow(QMainWindow):
+    """
+    Ventana principal que actúa como orquestador de la aplicación.
+    Coordina los diferentes componentes siguiendo el patrón de composición.
+    """
+    
     def __init__(self, engine: SimulationEngine):
         super().__init__()
         self.engine = engine
-        arch_name = getattr(engine, "architecture_name", str(getattr(engine, "architecture", "")))
-        self.setWindowTitle(f"Simulación SO - {arch_name} - {engine.scheduling_alg_name}")
+        self._setup_window()
+        self._init_timer()
+        self._init_controllers()
+        self._init_views()
+        self._init_panels()
+        self._setup_layout()
+        self._connect_signals()
+        self._initial_update()
+
+    def _setup_window(self) -> None:
+        """Configura las propiedades básicas de la ventana."""
+        arch_name = getattr(
+            self.engine, 
+            "architecture_name", 
+            str(getattr(self.engine, "architecture", ""))
+        )
+        self.setWindowTitle(f"Simulación SO - {arch_name} - {self.engine.scheduling_alg_name}")
         self.resize(1200, 800)
 
-        # Estado de selección
-        self.processes_selected = False
-        self.memory_selected = False
-        self.first_selected = None  # 'processes' o 'memory'
+    def _init_timer(self) -> None:
+        """Inicializa el timer para la simulación."""
+        self.timer = QTimer(self)
 
+    def _init_controllers(self) -> None:
+        """Inicializa los controladores."""
+        # Controlador de simulación
+        self.sim_controller = SimulationController(self.engine, self.timer)
+        
+    def _init_views(self) -> None:
+        """Inicializa las vistas principales."""
+        self.processes_view = ProcessesView(self.engine)
+        self.memory_view = MemoryView(self.engine)
+        
+        # Vista de arquitectura solo para Modular
+        if self.engine.architecture == "Modular":
+            self.architecture_view = ArchitectureView(engine=self.engine)
+
+    def _init_panels(self) -> None:
+        """Inicializa los paneles de la interfaz."""
+        # Panel de contenido principal
+        self.content_panel = ContentPanel()
+        
+        # Página vacía
+        self.page_empty = EmptyPage()
+        
+        # Scroll areas para las vistas
+        self.scroll_processes = ScrollAreaFactory.create(self.processes_view)
+        self.scroll_memory = ScrollAreaFactory.create(self.memory_view)
+        
+        if self.engine.architecture == "Modular":
+            self.scroll_flow = ScrollAreaFactory.create_with_scrollbars(
+                self.architecture_view
+            )
+        
+        # Controlador de navegación
+        self.nav_controller = NavigationController(
+            self.content_panel.get_layout(),
+            on_change_callback=self._on_navigation_changed
+        )
+        self.nav_controller.set_empty_page(self.page_empty)
+        
+        # Panel de estado de arquitectura
+        self.arch_status_panel = ArchitectureStatusPanel()
+        
+        # Panel de control de simulación
+        self.control_panel = SimulationControlPanel(
+            on_toggle=self._toggle_simulation,
+            on_restart=self._restart_simulation,
+            on_speed_changed=self._set_speed
+        )
+        
+        # Botón finalizar
+        self.finish_button = FinishButton(on_finish=self._finish_simulation)
+        
+        # Paneles específicos por arquitectura
+        if self.engine.architecture == "Modular":
+            self.modules_panel = ModulesPanel()
+            self.layer_flow_panel = LayerFlowPanel()
+        elif self.engine.architecture == "Microkernel":
+            self.ext_modules_panel = ExternalModulesPanel()
+
+    def _setup_layout(self) -> None:
+        """Configura el layout principal de la ventana."""
         central = QWidget()
         self.setCentralWidget(central)
-        main_layout = QHBoxLayout(central) # Main layout is horizontal: Menu | Content
-
-        # Content Area - Widget contenedor principal
-        self.content_widget = QWidget()
-        self.content_layout = QVBoxLayout(self.content_widget)
-        self.content_layout.setContentsMargins(5, 5, 5, 5)
-        self.content_layout.setSpacing(5)
+        main_layout = QHBoxLayout(central)
         
-        # Page vacía inicial
-        self.page_empty = QWidget()
-        empty_layout = QVBoxLayout(self.page_empty)
-        empty_layout.addStretch()
-        empty_label = QLabel("Seleccione una opción para comenzar")
-        empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        empty_label.setStyleSheet("font-size: 18px; color: #666;")
-        empty_layout.addWidget(empty_label)
-        empty_layout.addStretch()
+        # Área de contenido (izquierda)
+        self._setup_content_area()
+        main_layout.addWidget(self.content_panel)
         
-        # Vistas separadas
-        self.processes_view = ProcessesView(engine)
-        self.memory_view = MemoryView(engine)
+        # Panel derecho (navegación, controles, consola)
+        right_widget = self._build_right_panel()
+        right_widget.setFixedWidth(300)
+        main_layout.addWidget(right_widget)
 
-        # Crear ScrollAreas para procesos y memoria
-        self.scroll_processes = QScrollArea()
-        self.scroll_processes.setWidget(self.processes_view)
-        self.scroll_processes.setWidgetResizable(True)
-        self.scroll_processes.setVisible(False)
-        self.scroll_processes.setFrameShape(QFrame.Shape.NoFrame)
-        
-        self.scroll_memory = QScrollArea()
-        self.scroll_memory.setWidget(self.memory_view)
-        self.scroll_memory.setWidgetResizable(True)
-        self.scroll_memory.setVisible(False)
-        self.scroll_memory.setFrameShape(QFrame.Shape.NoFrame)
+    def _setup_content_area(self) -> None:
+        """Configura el área de contenido con la página vacía inicial."""
+        self.content_panel.get_layout().addWidget(self.page_empty)
 
-        # Separador visual entre secciones
-        self.divider = QFrame()
-        self.divider.setFrameShape(QFrame.Shape.HLine)
-        self.divider.setFrameShadow(QFrame.Shadow.Sunken)
-        self.divider.setLineWidth(2)
-        self.divider.setStyleSheet("background-color: white; border: 2px solid white;")
-        self.divider.setFixedHeight(3)
-        self.divider.setVisible(False)
-
-        # Mostrar página vacía inicialmente
-        self.content_layout.addWidget(self.page_empty)
-
-        # Navigation & Console (Right Side)
+    def _build_right_panel(self) -> QWidget:
+        """Construye el panel derecho con todos sus componentes."""
         right_widget = QWidget()
         right_layout = QVBoxLayout(right_widget)
         right_layout.setSpacing(3)
         right_layout.setContentsMargins(2, 2, 2, 2)
         
-        # Botón Finalizar Programa
-        self.btn_finish = QPushButton("Finalizar Programa")
-        self.btn_finish.setStyleSheet("background-color: #d32f2f; color: white; font-weight: bold; padding: 5px;")
-        self.btn_finish.clicked.connect(self.finish_simulation)
-        right_layout.addWidget(self.btn_finish)
+        # Botón finalizar
+        right_layout.addWidget(self.finish_button)
+        
+        # Panel de navegación
+        nav_group = self._build_navigation_panel()
+        right_layout.addWidget(nav_group)
+        
+        # Panel de estado de arquitectura
+        right_layout.addWidget(self.arch_status_panel)
+        
+        # Paneles específicos por arquitectura
+        if self.engine.architecture == "Modular":
+            right_layout.addWidget(self.modules_panel)
+            right_layout.addWidget(self.layer_flow_panel)
+        elif self.engine.architecture == "Microkernel":
+            right_layout.addWidget(self.ext_modules_panel)
+        
+        # Panel de control
+        right_layout.addWidget(self.control_panel)
+        
+        # Consola
+        self.console = ConsoleWidget(self.engine, self)
+        right_layout.addWidget(self.console, 1)
+        
+        return right_widget
 
-        # Checkboxes de Navegación
+    def _build_navigation_panel(self) -> QGroupBox:
+        """Construye el panel de opciones de navegación."""
         nav_group = QGroupBox("Opciones")
         nav_layout = QVBoxLayout(nav_group)
         nav_layout.setSpacing(2)
         nav_layout.setContentsMargins(4, 4, 4, 4)
         
+        # Checkbox Gestión de Procesos
         self.checkbox_processes = QCheckBox("Gestión de Procesos")
-        self.checkbox_processes.stateChanged.connect(self.on_navigation_changed)
         nav_layout.addWidget(self.checkbox_processes)
         
+        # Checkbox Gestión de Memoria
         self.checkbox_memory = QCheckBox("Gestión de Memoria")
-        self.checkbox_memory.stateChanged.connect(self.on_navigation_changed)
         nav_layout.addWidget(self.checkbox_memory)
-
-        if engine.architecture == "Modular":
+        
+        # Registrar en el controlador de navegación
+        self.nav_controller.register_view(
+            'processes', 
+            self.checkbox_processes, 
+            self.scroll_processes
+        )
+        self.nav_controller.register_view(
+            'memory', 
+            self.checkbox_memory, 
+            self.scroll_memory
+        )
+        
+        # Flujo entre capas (solo Modular)
+        if self.engine.architecture == "Modular":
             self.checkbox_flow = QCheckBox("Flujo entre Capas")
-            self.checkbox_flow.stateChanged.connect(self.on_navigation_changed)
             nav_layout.addWidget(self.checkbox_flow)
-        
-        right_layout.addWidget(nav_group)
-
-        # Panel de Estado de Arquitectura (siempre visible)
-        arch_status_group = QGroupBox("📊 Estado de Arquitectura")
-        arch_status_layout = QVBoxLayout(arch_status_group)
-        arch_status_layout.setSpacing(2)
-        arch_status_layout.setContentsMargins(4, 4, 4, 4)
-        self.arch_status_label = QLabel()
-        self.arch_status_label.setWordWrap(True)
-        self.arch_status_label.setStyleSheet("font-size: 10px;")
-        arch_status_layout.addWidget(self.arch_status_label)
-        right_layout.addWidget(arch_status_group)
-        
-        # Panel de Control de Módulos (visible según arquitectura)
-        if engine.architecture == "Modular":
-            arch_control_group = QGroupBox("🔧 Módulos del Sistema")
-            arch_control_layout = QVBoxLayout(arch_control_group)
-            arch_control_layout.setSpacing(2)
-            arch_control_layout.setContentsMargins(4, 4, 4, 4)
-            
-            self.modules_list = QListWidget()
-            self.modules_list.setMaximumHeight(120)
-            self.modules_list.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
-            # arch_control_layout.addWidget(QLabel("Módulos del Sistema")) # Eliminado por duplicidad
-            arch_control_layout.addWidget(self.modules_list)
-            
-            right_layout.addWidget(arch_control_group)
-            
-            # Visualización gráfica de arquitectura con flujos (con scroll)
-            self.architecture_view = ArchitectureView(engine=self.engine)
-            # Crear ScrollArea para permitir desplazamiento
-            self.scroll_flow = QScrollArea()
-            self.scroll_flow.setWidget(self.architecture_view)
-            self.scroll_flow.setWidgetResizable(True)
-            # Scrollbars solo cuando sean necesarios
-            self.scroll_flow.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-            self.scroll_flow.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-            self.scroll_flow.setFrameShape(QFrame.Shape.NoFrame)
-            self.scroll_flow.setStyleSheet("QScrollArea { border: 1px solid #ccc; background-color: #f5f5f5; }")
-            self.scroll_flow.setVisible(False)
-            
-            # Nota: La vista de arquitectura ahora se muestra en el panel principal al seleccionar "Flujo entre Capas"
-            
-            layer_flow_group = QGroupBox("📡 Flujo entre Capas (Modular)")
-            layer_flow_layout = QVBoxLayout(layer_flow_group)
-            layer_flow_layout.setSpacing(2)
-            layer_flow_layout.setContentsMargins(4, 4, 4, 4)
-            self.layer_flow_list = QListWidget()
-            self.layer_flow_list.setMaximumHeight(120)
-            self.layer_flow_list.setWordWrap(True)
-            layer_flow_layout.addWidget(QLabel("Últimas interacciones (máx. 5):"))
-            layer_flow_layout.addWidget(self.layer_flow_list)
-            right_layout.addWidget(layer_flow_group)
-        elif engine.architecture == "Microkernel":
-            # Panel de Módulos Externos para Microkernel
-            ext_modules_group = QGroupBox("🔌 Módulos Externos")
-            ext_modules_layout = QVBoxLayout(ext_modules_group)
-            ext_modules_layout.setSpacing(2)
-            ext_modules_layout.setContentsMargins(4, 4, 4, 4)
-            self.ext_modules_list = QListWidget()
-            self.ext_modules_list.setMaximumHeight(70)
-            ext_modules_layout.addWidget(QLabel("Servicios Externos:"))
-            ext_modules_layout.addWidget(self.ext_modules_list)
-            right_layout.addWidget(ext_modules_group)
-        
-        # Simulation Controls
-        controls_group = QGroupBox("Control Simulación")
-        controls_layout = QGridLayout(controls_group)
-        controls_layout.setSpacing(2)
-        controls_layout.setContentsMargins(4, 4, 4, 4)
-        
-        self.btn_pause_resume = QPushButton("Activar")
-        self.btn_pause_resume.setStyleSheet("background-color: #00AA00; color: white;")
-        self.btn_pause_resume.clicked.connect(self.toggle_simulation)
-        controls_layout.addWidget(self.btn_pause_resume, 0, 0)
-        
-        self.btn_restart = QPushButton("Reiniciar")
-        self.btn_restart.setStyleSheet("background-color: #AA0000; color: white;")
-        self.btn_restart.clicked.connect(self.restart_simulation)
-        controls_layout.addWidget(self.btn_restart, 0, 1)
-        
-        lbl_speed = QLabel("Duración de Tick (ms):")
-        controls_layout.addWidget(lbl_speed, 1, 0)
-        
-        self.spin_speed = QSpinBox()
-        self.spin_speed.setRange(10, 5000)
-        self.spin_speed.setValue(1000)
-        self.spin_speed.setSingleStep(50)
-        self.spin_speed.setEnabled(True) # Only enabled when paused
-        self.spin_speed.valueChanged.connect(self.set_speed)
-        controls_layout.addWidget(self.spin_speed, 1, 1)
-        
-        right_layout.addWidget(controls_group)
-        
-        self.console = ConsoleWidget(self.engine, self)
-        right_layout.addWidget(self.console, 1)
-        
-        right_widget.setFixedWidth(300)
-
-        # Add to main layout
-        main_layout.addWidget(self.content_widget)
-        main_layout.addWidget(right_widget)
-
-        # Timer
-        self.timer = QTimer(self)
-        self.timer.timeout.connect(self.on_tick)
-        
-        # Initial update
-        self.update_architecture_view()
-
-    def group_box(self, title: str, widget: QWidget) -> QGroupBox:
-        box = QGroupBox(title)
-        layout = QVBoxLayout(box)
-        layout.addWidget(widget)
-        return box
-
-    def wrap_layout(self, layout: QVBoxLayout) -> QWidget:
-        w = QWidget()
-        w.setLayout(layout)
-        return w
-
-    def on_navigation_changed(self):
-        """Maneja los cambios en la selección de opciones de navegación"""
-        if not hasattr(self, 'selection_order'):
-            self.selection_order = []
-
-        # Map checkboxes to IDs
-        options = {
-            'processes': self.checkbox_processes,
-            'memory': self.checkbox_memory
-        }
-        if hasattr(self, 'checkbox_flow'):
-            options['flow'] = self.checkbox_flow
-
-        # Update selection order
-        for key, checkbox in options.items():
-            if checkbox.isChecked():
-                if key not in self.selection_order:
-                    self.selection_order.append(key)
-            else:
-                if key in self.selection_order:
-                    self.selection_order.remove(key)
-        
-        # Limpiar layout de contenido
-        while self.content_layout.count():
-            child = self.content_layout.takeAt(0)
-            if isinstance(child, QLayoutItem):
-                aux = child.widget()
-                if aux:
-                    aux.setParent(None)
-            
-        # Ocultar todos los scrolls y página vacía
-        self.scroll_processes.setVisible(False)
-        self.scroll_memory.setVisible(False)
-        if hasattr(self, 'scroll_flow'):
-            self.scroll_flow.setVisible(False)
-        self.page_empty.setVisible(False)
-        
-        if not self.selection_order:
-            self.content_layout.addWidget(self.page_empty)
-            self.page_empty.setVisible(True)
-            return
-
-        # Add widgets in order
-        for i, key in enumerate(self.selection_order):
-            # Add divider if not first
-            if i > 0:
-                div = QFrame()
-                div.setFrameShape(QFrame.Shape.HLine)
-                div.setFrameShadow(QFrame.Shadow.Sunken)
-                div.setStyleSheet("background-color: white; border: 2px solid white;")
-                div.setFixedHeight(3)
-                self.content_layout.addWidget(div)
-
-            if key == 'processes':
-                self.content_layout.addWidget(self.scroll_processes, 1)
-                self.scroll_processes.setVisible(True)
-            elif key == 'memory':
-                self.content_layout.addWidget(self.scroll_memory, 1)
-                self.scroll_memory.setVisible(True)
-            elif key == 'flow':
-                self.content_layout.addWidget(self.scroll_flow, 1)
-                self.scroll_flow.setVisible(True)
-
-    def on_tick(self):
-        self.engine.tick()
-        self.processes_view.refresh_all()
-        self.memory_view.refresh_all()
-        self.update_architecture_view()
-        self.refresh_layer_flow()
-
-    def refresh_layer_flow(self):
-        """Actualiza el panel de flujo entre capas (solo Modular)."""
-        if not hasattr(self, 'layer_flow_list'):
-            return
-        
-        # Obtener solo los últimos 5 eventos
-        all_events = self.engine.layer_flow_events()
-        events = all_events[-5:] if all_events else []
-        
-        # Reconstruir lista siempre para asegurar que se muestra lo último
-        self.layer_flow_list.clear()
-        
-        for ev in events:
-            # Formato mejorado con colores e información detallada
-            tick = ev.get('tick', '?')
-            source = ev.get('source', '?')
-            target = ev.get('target', '?')
-            action = ev.get('action', '?')
-            
-            # Parsear acción para mostrar información relevante
-            action_display = action
-            if ':' in action:
-                action_type, action_data = action.split(':', 1)
-                if action_type == 'alloc':
-                    action_display = f"💾 Asignar memoria PID:{action_data}"
-                elif action_type == 'dispatch':
-                    action_display = f"▶️ Despachar proceso PID:{action_data}"
-                elif action_type == 'ready':
-                    action_display = f"✅ Marcar listo PID:{action_data}"
-                elif action_type == 'syscall':
-                    action_display = f"🔧 Syscall PID:{action_data}"
-                elif action_type == 'io_req':
-                    action_display = f"📥 Solicitud I/O PID:{action_data}"
-                elif action_type == 'load':
-                    action_display = f"⬆️ Cargar módulo: {action_data}"
-                elif action_type == 'unload':
-                    action_display = f"⬇️ Descargar módulo: {action_data}"
-            
-            item_text = f"[Tick {tick}] {source} → {target}\n   {action_display}"
-            item = QListWidgetItem(item_text)
-            
-            # Forzar texto negro para asegurar contraste con fondos claros
-            item.setForeground(QColor(0, 0, 0))
-            
-            # Color según el tipo de acción
-            if 'alloc' in action or 'memory' in action.lower():
-                item.setBackground(QColor(220, 237, 255))  # Azul claro para memoria
-            elif 'dispatch' in action or 'ready' in action:
-                item.setBackground(QColor(220, 255, 220))  # Verde claro para procesos
-            elif 'io' in action.lower() or 'syscall' in action.lower():
-                item.setBackground(QColor(255, 247, 220))  # Amarillo claro para I/O
-            elif 'load' in action or 'unload' in action:
-                item.setBackground(QColor(255, 220, 237))  # Rosa claro para módulos
-            else:
-                item.setBackground(QColor(245, 245, 245))  # Gris claro por defecto
-            
-            self.layer_flow_list.addItem(item)
-        self.layer_flow_list.scrollToBottom()
-        
-    def update_architecture_view(self):
-        """Actualiza la información de la arquitectura incluyendo visualización gráfica."""
-        # Actualizar lista de módulos si es arquitectura Modular
-        if hasattr(self, 'modules_list') and self.engine.architecture == "Modular":
-            self.modules_list.clear()
-            
-            # Estructura jerárquica solicitada
-            modules_structure = [
-                ("Núcleo Base", "🔒", []),
-                ("Procesos Core", "🔒", ["Planificador", "Despachador"]),
-                ("Memoria Core", "🔒", ["Asignación", "Paginación"])
-            ]
-            
-            for name, icon, submodules in modules_structure:
-                # Módulo principal
-                item = QListWidgetItem(f"{icon} {name}")
-                self.modules_list.addItem(item)
-                
-                # Submódulos
-                for sub in submodules:
-                    sub_item = QListWidgetItem(f"    • {sub}")
-                    self.modules_list.addItem(sub_item)
-        
-        # Actualizar vista gráfica de arquitectura
-        if hasattr(self, 'architecture_view') and self.engine.architecture == "Modular":
-            flow_events = self.engine.layer_flow_events()
-            self.architecture_view.update_architecture(
-                architecture="Modular",
-                kernel_mode="modular",
-                dynamic_modules=self.engine.dynamic_modules,
-                flow_events=flow_events
+            self.nav_controller.register_view(
+                'flow',
+                self.checkbox_flow,
+                self.scroll_flow
             )
         
-        # Actualizar estado de arquitectura
-        if hasattr(self, 'arch_status_label'):
-            self._update_arch_status()
-            
-    def _update_arch_status(self):
-        """Actualiza el texto de estado de la arquitectura."""
-        if not self.engine.is_running and self.engine.tick_count == 0:
-            self.arch_status_label.setText("Esperando inicio de simulación...")
-            return
+        return nav_group
 
-        status = self.engine.get_module_status()
-        arch = self.engine.architecture
+    def _connect_signals(self) -> None:
+        """Conecta las señales y callbacks entre componentes."""
+        # Configurar logging en el controlador de simulación
+        self.sim_controller.set_log_callback(self.console.print_msg)
         
-        if arch == "Modular":
-            text = "<b>📊 Estado Modular</b><br>"
-            text += f"• Núcleo base: <b>ACTIVO</b><br>"
-            text += f"• Módulos totales: <b>3</b><br>"
-            text += f"• Submódulos totales: <b>4</b>"
+        # Agregar callbacks de tick
+        self.sim_controller.add_tick_callback(self._on_tick)
+        
+        # Callback de cambio de estado de simulación
+        self.sim_controller.add_state_change_callback(self._on_simulation_state_changed)
+
+    def _initial_update(self) -> None:
+        """Realiza la actualización inicial de la interfaz."""
+        self._update_architecture_view()
+
+    # ==================== Handlers de Eventos ====================
+    
+    def _on_navigation_changed(self) -> None:
+        """Callback cuando cambia la navegación."""
+        # Se puede agregar lógica adicional si es necesario
+        pass
+
+    def _on_tick(self) -> None:
+        """Callback ejecutado en cada tick de la simulación."""
+        self.processes_view.refresh_all()
+        self.memory_view.refresh_all()
+        self._update_architecture_view()
+        self._refresh_layer_flow()
+
+    def _on_simulation_state_changed(self, is_running: bool) -> None:
+        """Callback cuando cambia el estado de la simulación."""
+        if is_running:
+            self.control_panel.set_running_state()
         else:
-            # Fallback a texto modular
-            text = "<b>📊 Estado Modular</b><br>"
-            text += f"• Núcleo base: <b>ACTIVO</b><br>"
-            text += f"• Módulos totales: <b>{len(self.engine.dynamic_modules)}</b><br>"
+            self.control_panel.set_paused_state()
         
-        self.arch_status_label.setText(text)
-        
-    def create_manual_process(self):
-        # Simple dialog to get size and duration
-        d = QDialog(self)
-        d.setWindowTitle("Crear Proceso")
-        l = QFormLayout(d)
-        sb_size = QSpinBox()
-        sb_size.setRange(1, 128)
-        sb_size.setValue(16)
-        l.addRow("Tamaño (MB):", sb_size)
-        
-        sb_dur = QSpinBox()
-        sb_dur.setRange(5, 200)
-        sb_dur.setValue(50)
-        l.addRow("Duración (ticks):", sb_dur)
-        
-        btn = QPushButton("Crear")
-        btn.clicked.connect(d.accept)
-        l.addRow(btn)
-        
-        if d.exec() == QDialog.DialogCode.Accepted:
-            self.engine.manual_create_process(sb_size.value(), sb_dur.value())
-
-    def toggle_simulation(self):
-        if self.timer.isActive():
-            self.pause_simulation()
-        else:
-            self.resume_simulation()
-
-    def pause_simulation(self):
-        self.timer.stop()
-        self.btn_pause_resume.setText("Reanudar")
-        self.spin_speed.setEnabled(True)
-        self.console.print_msg("Simulación pausada.")
-        self.engine.is_running = False
-        # Refresh views to enable per-CPU controls while paused
+        # Refrescar vistas para habilitar/deshabilitar controles por CPU
         self.processes_view.refresh_all()
         self.memory_view.refresh_all()
 
-    def resume_simulation(self):
-        self.timer.start(self.spin_speed.value())
-        self.btn_pause_resume.setText("Pausar")
-        self.spin_speed.setEnabled(False)
-        self.console.print_msg("Simulación reanudada.")
-        self.engine.is_running = True
-        # Refresh views to disable per-CPU controls while running
+    # ==================== Control de Simulación ====================
+    
+    def _toggle_simulation(self) -> None:
+        """Alterna entre pausar y reanudar la simulación."""
+        self.sim_controller.toggle(self.control_panel.get_speed())
+
+    def _restart_simulation(self) -> None:
+        """Reinicia la simulación."""
+        self.sim_controller.restart()
         self.processes_view.refresh_all()
         self.memory_view.refresh_all()
+        self.control_panel.set_initial_state()
 
-    def restart_simulation(self):
-        self.pause_simulation()
-        self.engine.reset()
-        self.processes_view.refresh_all()
-        self.memory_view.refresh_all()
-        self.console.print_msg("Simulación reiniciada.")
-        self.engine.is_running = False
+    def _set_speed(self, ms: int) -> None:
+        """Establece la velocidad de la simulación."""
+        self.sim_controller.set_speed(ms)
 
-    def set_speed(self, ms: int):
-        self.timer.setInterval(ms)
-        if self.spin_speed.value() != ms:
-             self.spin_speed.blockSignals(True)
-             self.spin_speed.setValue(ms)
-             self.spin_speed.blockSignals(False)
-
-    def finish_simulation(self):
+    def _finish_simulation(self) -> None:
         """Finaliza la simulación, genera reporte y cierra."""
-        self.pause_simulation()
+        self.sim_controller.pause()
         
         try:
             reporter = SimulationReporter(self.engine)
             filename = reporter.generate()
             
             QMessageBox.information(
-                self, 
-                "Simulación Finalizada", 
+                self,
+                "Simulación Finalizada",
                 f"Se ha generado el reporte exitosamente:\n{filename}\n\nEl programa se cerrará."
             )
             self.close()
@@ -498,3 +290,112 @@ class MainWindow(QMainWindow):
                 "Error",
                 f"Error al generar el reporte: {str(e)}"
             )
+
+    # ==================== Actualización de Vistas ====================
+    
+    def _update_architecture_view(self) -> None:
+        """Actualiza la información de la arquitectura."""
+        # Actualizar panel de módulos (Modular)
+        if hasattr(self, 'modules_panel') and self.engine.architecture == "Modular":
+            self._update_modules_panel()
+        
+        # Actualizar vista gráfica de arquitectura
+        if hasattr(self, 'architecture_view') and self.engine.architecture == "Modular":
+            self._update_architecture_graphic()
+        
+        # Actualizar estado de arquitectura
+        self._update_arch_status()
+
+    def _update_modules_panel(self) -> None:
+        """Actualiza el panel de módulos."""
+        modules_structure = [
+            ("Núcleo Base", "🔒", []),
+            ("Procesos Core", "🔒", ["Planificador", "Despachador"]),
+            ("Memoria Core", "🔒", ["Asignación", "Paginación"])
+        ]
+        self.modules_panel.set_modules_structure(modules_structure)
+
+    def _update_architecture_graphic(self) -> None:
+        """Actualiza la vista gráfica de arquitectura."""
+        flow_events = self.engine.layer_flow_events()
+        self.architecture_view.update_architecture(
+            architecture="Modular",
+            kernel_mode="modular",
+            dynamic_modules=self.engine.dynamic_modules,
+            flow_events=flow_events
+        )
+
+    def _update_arch_status(self) -> None:
+        """Actualiza el texto de estado de la arquitectura."""
+        if not self.engine.is_running and self.engine.tick_count == 0:
+            self.arch_status_panel.set_waiting_status()
+            return
+
+        if self.engine.architecture == "Modular":
+            self.arch_status_panel.set_modular_status()
+        else:
+            modules_count = len(self.engine.dynamic_modules)
+            self.arch_status_panel.set_generic_status(modules_count)
+
+    def _refresh_layer_flow(self) -> None:
+        """Actualiza el panel de flujo entre capas."""
+        if not hasattr(self, 'layer_flow_panel'):
+            return
+        
+        events = self.engine.layer_flow_events()
+        self.layer_flow_panel.update_events(events)
+
+    # ==================== Métodos Auxiliares ====================
+    
+    def create_manual_process(self) -> None:
+        """Crea un proceso manualmente a través de un diálogo."""
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Crear Proceso")
+        layout = QFormLayout(dialog)
+        
+        sb_size = QSpinBox()
+        sb_size.setRange(1, 128)
+        sb_size.setValue(16)
+        layout.addRow("Tamaño (MB):", sb_size)
+        
+        sb_dur = QSpinBox()
+        sb_dur.setRange(5, 200)
+        sb_dur.setValue(50)
+        layout.addRow("Duración (ticks):", sb_dur)
+        
+        btn = QPushButton("Crear")
+        btn.clicked.connect(dialog.accept)
+        layout.addRow(btn)
+        
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.engine.manual_create_process(sb_size.value(), sb_dur.value())
+
+    # ==================== Métodos de Compatibilidad ====================
+    # Estos métodos mantienen compatibilidad con código existente (como ConsoleWidget)
+    
+    def toggle_simulation(self) -> None:
+        """Método de compatibilidad."""
+        self._toggle_simulation()
+
+    def pause_simulation(self) -> None:
+        """Método de compatibilidad."""
+        self.sim_controller.pause()
+        self.control_panel.set_paused_state()
+
+    def resume_simulation(self) -> None:
+        """Método de compatibilidad."""
+        self.sim_controller.resume(self.control_panel.get_speed())
+        self.control_panel.set_running_state()
+
+    def restart_simulation(self) -> None:
+        """Método de compatibilidad."""
+        self._restart_simulation()
+
+    def set_speed(self, ms: int) -> None:
+        """Método de compatibilidad."""
+        self._set_speed(ms)
+        self.control_panel.set_speed(ms)
+
+    def finish_simulation(self) -> None:
+        """Método de compatibilidad."""
+        self._finish_simulation()
