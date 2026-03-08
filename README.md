@@ -16,6 +16,8 @@ Este proyecto es una simulación detallada del funcionamiento interno de un Sist
 
 ## Instrucciones de uso
 
+Recomendamos encarecidamente utilizar el ejecutable dentro de la carpeta `/ejecutable`. En caso de que no funcione, continue con los siguientes pasos
+
 1. Clonar el repositorio:
 
    ```bash
